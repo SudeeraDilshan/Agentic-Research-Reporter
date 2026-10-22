@@ -1,0 +1,32 @@
+# ============================================================
+# LangGraph Multi-Agent System — Requirements
+# ============================================================
+# Setup:
+#   python -m venv venv
+#   .\venv\Scripts\pip install -r requirements.txt
+# ============================================================
+
+# ── LangGraph ────────────────────────────────────────────────
+langgraph==1.2.16
+langgraph-checkpoint==4.3.0
+langgraph-prebuilt==1.1.1
+langgraph-sdk==0.4.8
+
+# ── LangChain ────────────────────────────────────────────────
+langchain==1.4.6
+langchain-core==1.6.12
+langchain-community==0.4.2
+langchain-openai==1.7.2
+langchain-text-splitters==1.1.3
+langchain-protocol==0.0.19
+langchain-classic==1.0.8
+
+# ── LLM Provider: OpenRouter ─────────────────────────────────
+langchain-openrouter==0.2.9    # ChatOpenRouter class
+openrouter==0.11.46            # underlying openrouter SDK
+
+# ── Utilities ────────────────────────────────────────────────
+python-dotenv==1.2.4           # reads .env file
+
+# ── Optional: Web search tool ────────────────────────────────
+tavily-python==0.8.5           # free tier at https://tavily.com
