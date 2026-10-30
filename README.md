@@ -1,6 +1,6 @@
-# 🧠 Multi-Agent Research & Report System
+# 🤖 Agentic Research Reporter
 
-A production-grade **multi-agent orchestration system** built with LangGraph — running parallel research agents, a human-in-the-loop approval gate, and a modular report-writing subgraph, all powered by [OpenRouter](https://openrouter.ai).
+A production-grade **multi-agent research and reporting system** built with LangGraph — parallel research agents fan out from a supervisor, findings pass through a human-in-the-loop approval gate, then a modular subgraph drafts, edits, and finalises a polished report. Powered by [OpenRouter](https://openrouter.ai).
 
 ---
 

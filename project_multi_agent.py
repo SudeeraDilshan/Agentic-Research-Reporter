@@ -215,7 +215,7 @@ if __name__ == "__main__":
     query = "What are the key impacts of generative AI on the future of work?"
 
     print("=" * 60)
-    print("  🤖 Multi-Agent Research & Report System")
+    print("  🤖 Agentic Research Reporter")
     print(f"  Query: {query}")
     print("=" * 60)
 
