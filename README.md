@@ -8,9 +8,11 @@ A production-grade **multi-agent orchestration system** built with LangGraph —
 
 > Full end-to-end graph — **Main Graph** with the **Report Subgraph** expanded inline.
 
-![Project Multi-Agent Architecture](assets/project_multi_agent_combined.png)
+<p align="center">
+  <img src="assets/project_multi_agent_combined.png" alt="Project Multi-Agent Architecture" />
+</p>
 
-*Dashed arrows = conditional / dynamic routing. Solid arrows = fixed edges.*
+<p align="center"><em>Dashed arrows = conditional / dynamic routing. Solid arrows = fixed edges.</em></p>
 
 ---
 
