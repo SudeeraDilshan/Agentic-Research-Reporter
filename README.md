@@ -1,107 +1,107 @@
-# 🧠 Multi-Agent Orchestration with LangGraph
+# 🧠 Multi-Agent Research & Report System
 
-A hands-on, progressive curriculum and capstone project for mastering **LangGraph** and building **multi-agent architectures** where agents run sequentially, in parallel (fan-out/fan-in), and under intelligent supervision.
+A production-grade **multi-agent orchestration system** built with LangGraph — running parallel research agents, a human-in-the-loop approval gate, and a modular report-writing subgraph, all powered by [OpenRouter](https://openrouter.ai).
 
-Powered by [OpenRouter](https://openrouter.ai) with support for free and frontier models.
+---
+
+## 🗺️ Architecture
+
+> Full end-to-end graph — **Main Graph** with the **Report Subgraph** expanded inline.
+
+![Project Multi-Agent Architecture](assets/project_multi_agent_combined.png)
+
+*Dashed arrows = conditional / dynamic routing. Solid arrows = fixed edges.*
 
 ---
 
 ## 📌 Table of Contents
 
-- [Overview](#-overview)
-- [Architecture & Mental Model](#-architecture--mental-model)
+- [How It Works](#-how-it-works)
+- [Project Structure](#-project-structure)
 - [Quick Start](#-quick-start)
-- [Project Structure & Learning Path](#-project-structure--learning-path)
-  - [Exercise 01: Hello LangGraph](#01---hello-langgraph-no-llm-needed)
-  - [Exercise 02: Two-Agent Chain](#02---two-agent-chain-openrouter-llm)
-  - [Exercise 03: Conditional Routing](#03---conditional-routing)
-  - [Exercise 04: Parallel Agents (Send API)](#04---parallel-agents-send-api-fan-outfan-in)
-  - [Exercise 05: Checkpointing & Memory](#05---checkpointing--multi-turn-memory)
-  - [Exercise 06: Supervisor Pattern](#06---supervisor-pattern-llm-orchestrator)
-  - [Capstone: Multi-Agent Research System](#-capstone-project-multi_agent_systempy)
-- [Core LangGraph Concepts Reference](#-core-langgraph-concepts-reference)
+- [Running the Project](#-running-the-project)
+- [Key Code Concepts](#-key-code-concepts)
 - [Switching LLM Models](#-switching-llm-models)
+- [Exercises](#-exercises)
 - [Troubleshooting](#-troubleshooting)
 
 ---
 
-## 🚀 Overview
+## ⚙️ How It Works
 
-Traditional LLM chains (like `prompt | llm | parser`) are strictly linear. Real-world agentic workflows require:
-- **Cycles & Loops**: Retrying, self-reflection, and back-and-forth collaboration.
-- **Parallel Execution**: Running multiple specialized agents concurrently (e.g., analyzing 3 angles at once).
-- **Persistent State**: Threaded conversation memory and time-travel debugging.
-- **Human-in-the-Loop (HITL)**: Pausing execution for human inspection/approval before risky actions.
+The system takes a user query and runs it through a full multi-phase pipeline:
 
-This repository takes you from zero to building production-grade multi-agent orchestrations using LangGraph.
+| Phase | Node | What it does |
+|-------|------|--------------|
+| 1 | `supervisor` | Breaks the query into 3 parallel research tasks |
+| 2 | `research_worker` × N | Runs all tasks **simultaneously** via the `Send` API (fan-out) |
+| 3 | `human_approval` | **Pauses** the graph with `interrupt()` — waits for human yes/no |
+| 4 | `report_pipeline` | **Subgraph**: `draft_writer → editor → finaliser` |
+
+### States
+
+| State class | Used by |
+|-------------|---------|
+| `MainState` | Root graph — holds query, tasks, findings, approval, and reports |
+| `ResearchWorkerState` | Each parallel worker — private state per instance |
+| `ReportState` | Report subgraph — draft, edited, and final report fields |
+
+### LangGraph Patterns Demonstrated
+
+| Pattern | Where |
+|---------|-------|
+| `operator.add` reducer | `research_findings` — safely merges parallel worker outputs |
+| `Send` API fan-out | `dispatch_workers()` — spawns N workers simultaneously |
+| `interrupt()` / `Command(resume=...)` | `human_approval_node()` — HITL gate |
+| Compiled subgraph | `report_subgraph` embedded as a node in the main graph |
+| `MemorySaver` checkpointer | Persists state across the interrupt/resume lifecycle |
 
 ---
 
-## 🧩 Architecture & Mental Model
-
-Think of LangGraph as a **state-machine workspace**:
+## 📂 Project Structure
 
 ```
-                       ┌──────────────────────────────────────────┐
-                       │          SHARED STATE (TypedDict)        │
-                       │  { messages: [...], findings: [...] }    │
-                       └──────────────────────────────────────────┘
-                                   ▲                  ▲
-                      reads / writes                  reads / writes
-                                   │                  │
-                ┌──────────────────┴──┐            ┌──┴──────────────────┐
-                │   Researcher Agent  │            │     Coder Agent     │
-                │        (Node)       │            │       (Node)        │
-                └─────────────────────┘            └─────────────────────┘
-                                   │                  │
-                                   ▼                  ▼
-                       ┌──────────────────────────────────────────┐
-                       │               EDGES / ROUTER             │
-                       │     (Controls who executes next)         │
-                       └──────────────────────────────────────────┘
+multi agent system/
+├── project_multi_agent.py        # 🏆 Main project
+├── export_graph.py               # Regenerates architecture graph images
+├── config.py                     # LLM factory (OpenRouter)
+├── requirements.txt
+├── .env                          # API key & model selection
+├── assets/                       # Graph images
+│   ├── project_multi_agent_combined.png
+│   ├── project_multi_agent_graph.png
+│   └── report_subgraph.png
+└── exercises/                    # 📚 Standalone learning exercises (01–06)
 ```
-
-- **State**: Central data structure defining the shared memory.
-- **Nodes**: Plain Python functions representing workers/agents.
-- **Edges**: Pathways determining execution order (fixed, conditional, or parallel).
 
 ---
 
 ## ⚡ Quick Start
 
-### 1. Clone & Enter Directory
-```powershell
-cd "d:\Aca\4th year\projects\multi agent system"
-```
-
-### 2. Create and Activate Virtual Environment
+### 1. Create & Activate Virtual Environment
 ```powershell
 python -m venv venv
 .\venv\Scripts\activate
 ```
 
-### 3. Install Dependencies
+### 2. Install Dependencies
 ```powershell
 .\venv\Scripts\pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
-Copy `.env.example` to `.env`:
-```powershell
-copy .env.example .env
-```
-Open `.env` and set your OpenRouter API key:
+### 3. Configure API Key
+Open `.env` and set:
 ```env
 OPENROUTER_API_KEY=sk-or-v1-your-actual-api-key-here
 DEFAULT_MODEL=nvidia/nemotron-3.5-lightning:free
 ```
 
-### 5. Verify Setup
+### 4. Verify Setup
 ```powershell
 .\venv\Scripts\python config.py
 ```
-Expected output:
-```text
+Expected:
+```
 ✅  Model : nvidia/nemotron-3.5-lightning:free
    Testing OpenRouter connection …
    Response: OpenRouter OK!
@@ -109,244 +109,137 @@ Expected output:
 
 ---
 
-## 📂 Project Structure & Learning Path
+## ▶️ Running the Project
 
-| File | Primary Concepts | Type |
-|------|------------------|------|
-| [`config.py`](config.py) | Central `ChatOpenRouter` factory, UTF-8 console setup | Config |
-| [`01_hello_langgraph.py`](01_hello_langgraph.py) | `StateGraph`, `TypedDict`, `Nodes`, `Edges`, `compile()` | Exercise |
-| [`02_two_agent_llm.py`](02_two_agent_llm.py) | `ChatOpenRouter`, `SystemMessage`, `add_messages` | Exercise |
-| [`03_conditional_routing.py`](03_conditional_routing.py) | `add_conditional_edges`, dynamic router functions | Exercise |
-| [`04_parallel_agents.py`](04_parallel_agents.py) | `Send` API, supersteps, `operator.add` reducers | Exercise |
-| [`05_checkpointing.py`](05_checkpointing.py) | `MemorySaver`, `thread_id`, session isolation | Exercise |
-| [`06_supervisor_pattern.py`](06_supervisor_pattern.py) | Supervisor node, multi-turn loops, `FINISH` signal | Exercise |
-| [`project_multi_agent.py`](project_multi_agent.py) | **Full Capstone**: Parallel fan-out + HITL + Subgraph | Project |
-
----
-
-### 01 - Hello LangGraph (No LLM Needed)
-- **File**: `01_hello_langgraph.py`
-- **Concept**: Learn the foundational skeleton of LangGraph without burning any API tokens.
-- **Flow**: `START` → `greeter_node` → `responder_node` → `END`
-- **Run**:
-  ```powershell
-  .\venv\Scripts\python 01_hello_langgraph.py
-  ```
-
----
-
-### 02 - Two-Agent Chain (OpenRouter LLM)
-- **File**: `02_two_agent_llm.py`
-- **Concept**: Connect real LLMs to nodes using `ChatOpenRouter`. Agent A (`researcher`) collects facts and hands them off to Agent B (`summariser`) via the shared message state.
-- **Flow**: `START` → `researcher` → `summariser` → `END`
-- **Run**:
-  ```powershell
-  .\venv\Scripts\python 02_two_agent_llm.py
-  ```
-
----
-
-### 03 - Conditional Routing
-- **File**: `03_conditional_routing.py`
-- **Concept**: Dynamic decision making using `add_conditional_edges`. A classifier agent determines user intent (`research`, `code`, or `write`) and routes dynamically to the appropriate specialist.
-- **Flow**:
-  ```
-                     ┌──> researcher ──┐
-  START ──> classifier ──┼──> coder      ──┼──> END
-                     └──> writer     ──┘
-  ```
-- **Run**:
-  ```powershell
-  .\venv\Scripts\python 03_conditional_routing.py
-  ```
-
----
-
-### 04 - Parallel Agents (Send API Fan-Out/Fan-In)
-- **File**: `04_parallel_agents.py`
-- **Concept**: Run multiple agents **simultaneously** in the same superstep using LangGraph's `Send` API. Outputs are safely collected using an `operator.add` reducer before converging on an aggregator.
-- **Flow**:
-  ```
-                        ┌──> [Worker 1: Benefits]    ──┐
-  START ──> supervisor ─┼──> [Worker 2: Challenges]  ──┼──> aggregator ──> END
-                        └──> [Worker 3: Future]      ──┘
-                                (All run in parallel!)
-  ```
-- **Run**:
-  ```powershell
-  .\venv\Scripts\python 04_parallel_agents.py
-  ```
-
----
-
-### 05 - Checkpointing & Multi-Turn Memory
-- **File**: `05_checkpointing.py`
-- **Concept**: State persistence using `MemorySaver`. LangGraph tracks state checkpoints per `thread_id`, enabling isolated user sessions and time-travel debugging.
-- **Run**:
-  ```powershell
-  .\venv\Scripts\python 05_checkpointing.py
-  ```
-
----
-
-### 06 - Supervisor Pattern (LLM Orchestrator)
-- **File**: `06_supervisor_pattern.py`
-- **Concept**: An LLM supervisor orchestrates multiple workers in a loop, deciding dynamically whether to consult a specialist or conclude the interaction.
-- **Flow**:
-  ```
-              ┌──────────────────────────┐
-              ▼                          │
-  START ──> supervisor ──┬──> researcher ┘
-                         ├──> analyst    ┘
-                         └──> END (when done)
-  ```
-- **Run**:
-  ```powershell
-  .\venv\Scripts\python 06_supervisor_pattern.py
-  ```
-
----
-
-### 🏆 Capstone Project (`project_multi_agent.py`)
-
-A full end-to-end research and report generation pipeline combining **all** advanced patterns:
-
-```
-                                  [User Query]
-                                       │
-                                       ▼
-                            🎯 Supervisor Node
-                          (Plans 3 distinct tasks)
-                                       │
-                                       ▼  (Send API Fan-Out)
-         ┌─────────────────────────────┼─────────────────────────────┐
-         ▼                             ▼                             ▼
-  🔬 Research Worker 1          🔬 Research Worker 2          🔬 Research Worker 3
- (Analyzes Task 1)             (Analyzes Task 2)             (Analyzes Task 3)
-         └─────────────────────────────┬─────────────────────────────┘
-                                       │  (operator.add Fan-In)
-                                       ▼
-                            ⏸️ Human Approval Gate
-                            (interrupt() suspends graph)
-                                       │
-                    ┌──────────────────┴──────────────────┐
-           [Approved: "yes"]                     [Rejected: "no"]
-                    │                                     │
-                    ▼                                     ▼
-        📄 Report Pipeline (Subgraph)                   END
-     ┌────────────────────────────────────┐
-     │ draft_writer → editor → finaliser  │
-     └────────────────────────────────────┘
-                    │
-                    ▼
-                   END
-```
-
-#### Run the Capstone:
 ```powershell
 .\venv\Scripts\python project_multi_agent.py
 ```
 
-When prompted at the approval gate:
-```text
+**Phase 1** — Supervisor plans tasks, 3 research workers run in parallel, then the graph pauses:
+```
+============================================================
   ⏸️  HUMAN APPROVAL REQUIRED
   Research complete! Please review the findings before report generation.
-  Approve report generation? (yes/no): yes
+  Approve report generation? (yes/no):
 ```
-Type `yes` and press Enter to resume execution through the report pipeline subgraph!
+
+Type `yes` to resume → the report subgraph runs (`draft_writer → editor → finaliser`) and prints the final report.
+
+Type `no` to abort → graph ends without generating a report.
 
 ---
 
-## 📚 Core LangGraph Concepts Reference
+## 🔑 Key Code Concepts
 
-### 1. State & Reducers
-```python
-from typing import TypedDict, Annotated, List
-from langgraph.graph.message import add_messages
-import operator
-
-class MultiAgentState(TypedDict):
-    # Appends new messages rather than overwriting
-    messages: Annotated[list, add_messages]
-    
-    # Appends items from parallel workers safely
-    findings: Annotated[List[str], operator.add]
-    
-    # Overwritten on each step
-    current_agent: str
-```
-
-### 2. Parallel Fan-Out with `Send`
+### 1. Parallel Fan-Out with `Send`
 ```python
 from langgraph.types import Send
 
-def fan_out_tasks(state: MultiAgentState):
-    # Creates N simultaneous executions of worker_node
+def dispatch_workers(state: MainState) -> List[Send]:
     return [
-        Send("worker_node", {"task": item})
-        for item in state["tasks"]
+        Send("research_worker", {"query": state["query"], "task": task})
+        for task in state["research_tasks"]
     ]
 
-builder.add_conditional_edges("supervisor", fan_out_tasks)
+builder.add_conditional_edges("supervisor", dispatch_workers, ["research_worker"])
 ```
 
-### 3. Human-in-the-Loop (`interrupt` & `Command`)
+### 2. Safe State Merging with `operator.add`
+```python
+class MainState(TypedDict):
+    # Each parallel worker returns a list — operator.add concatenates them
+    research_findings: Annotated[List[str], operator.add]
+```
+
+### 3. Human-in-the-Loop (`interrupt` / `Command`)
 ```python
 from langgraph.types import interrupt, Command
 
-def human_gate(state: MultiAgentState):
-    # Pauses graph and sends payload to caller
-    decision = interrupt({"prompt": "Approve action?", "data": state["findings"]})
-    return {"approved": decision == "yes"}
+def human_approval_node(state: MainState) -> dict:
+    decision = interrupt({"question": "Approve report generation? (yes/no)"})
+    return {"human_approved": decision.lower() in ("yes", "y")}
 
-# Resume graph from external code:
-app.invoke(Command(resume="yes"), config=thread_config)
+# Resume from outside the graph:
+app.invoke(Command(resume="yes"), config=thread)
 ```
 
-### 4. Checkpointers & Threads
+### 4. Compiled Subgraph
+```python
+report_builder = StateGraph(ReportState)
+report_builder.add_node("draft_writer", draft_writer)
+report_builder.add_node("editor", editor_node)
+report_builder.add_node("finaliser", finaliser_node)
+report_builder.add_edge(START, "draft_writer")
+report_builder.add_edge("draft_writer", "editor")
+report_builder.add_edge("editor", "finaliser")
+report_builder.add_edge("finaliser", END)
+report_subgraph = report_builder.compile()
+
+# Used as a node in the main graph:
+main_builder.add_node("report_pipeline", report_subgraph)
+```
+
+### 5. Checkpointing for HITL
 ```python
 from langgraph.checkpoint.memory import MemorySaver
 
 checkpointer = MemorySaver()
-app = builder.compile(checkpointer=checkpointer)
+app = main_builder.compile(checkpointer=checkpointer)
 
-# Isolated conversation contexts:
-config = {"configurable": {"thread_id": "session-123"}}
-app.invoke(inputs, config=config)
+# Same thread_id ties Phase 1 and Phase 2 together:
+thread = {"configurable": {"thread_id": "research-session-001"}}
+app.invoke(initial_state, config=thread)         # Phase 1: runs until interrupt
+app.invoke(Command(resume="yes"), config=thread) # Phase 2: resumes from checkpoint
 ```
 
 ---
 
 ## 🔄 Switching LLM Models
 
-All exercises import the model from `config.py`. To switch models across the entire codebase, simply update `DEFAULT_MODEL` in your `.env` file:
+Update `DEFAULT_MODEL` in `.env`:
 
 ```env
-# Free models on OpenRouter:
+# Free models:
 DEFAULT_MODEL=nvidia/nemotron-3.5-lightning:free
-DEFAULT_MODEL=minimax/minimax-m3.1-flash:free
-DEFAULT_MODEL=liquid/lfm-2.5-2.6b:free
-DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b:free
+DEFAULT_MODEL=google/gemini-2.0-flash-exp:free
 
-# High-capability frontier models:
+# Frontier models:
 DEFAULT_MODEL=anthropic/claude-3.5-sonnet
 DEFAULT_MODEL=openai/gpt-4o-mini
-DEFAULT_MODEL=google/gemini-2.0-flash-exp:free
+```
+
+---
+
+## 📚 Exercises
+
+The `exercises/` folder contains 6 standalone files that progressively build up the concepts used in the main project:
+
+| File | Concept |
+|------|---------|
+| `01_hello_langgraph.py` | Basic `StateGraph`, nodes, edges — no LLM needed |
+| `02_two_agent_llm.py` | Two-node chain with a real LLM |
+| `03_conditional_routing.py` | `add_conditional_edges`, dynamic routing |
+| `04_parallel_agents.py` | `Send` API fan-out/fan-in |
+| `05_checkpointing.py` | `MemorySaver`, `thread_id`, session isolation |
+| `06_supervisor_pattern.py` | LLM supervisor orchestrating workers in a loop |
+
+Run any exercise from the project root:
+```powershell
+.\venv\Scripts\python exercises\04_parallel_agents.py
 ```
 
 ---
 
 ## 🛠️ Troubleshooting
 
-- **`NotFoundResponseError` (Model unavailable for free)**:
-  OpenRouter occasionally changes which models have the `:free` suffix. Run:
+- **`NotFoundResponseError` (model unavailable)**:
+  List currently active free models:
   ```powershell
   .\venv\Scripts\python -c "import requests; r = requests.get('https://openrouter.ai/api/v1/models').json(); print([m['id'] for m in r['data'] if ':free' in m['id']])"
   ```
-  Pick an active model and update `DEFAULT_MODEL` in `.env`.
+  Pick one and update `DEFAULT_MODEL` in `.env`.
 
-- **Windows Console UnicodeEncodeError**:
-  `config.py` already includes automatic `sys.stdout.reconfigure(encoding='utf-8')`. If running arbitrary commands, you can set:
+- **Windows UnicodeEncodeError** (emoji in console):
   ```powershell
   $env:PYTHONIOENCODING="utf-8"
   ```
@@ -355,4 +248,4 @@ DEFAULT_MODEL=google/gemini-2.0-flash-exp:free
 
 ## 📜 License
 
-MIT License. Free to use, adapt, and build upon for study and commercial projects.
+MIT License. Free to use, adapt, and build upon.

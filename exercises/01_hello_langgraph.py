@@ -1,22 +1,12 @@
-# ============================================================
-# Exercise 01: Hello LangGraph — Your First Graph
-# ============================================================
-# CONCEPTS: State · Nodes · Edges · StateGraph · compile()
-#
-# Run: .\venv\Scripts\python 01_hello_langgraph.py
-# ============================================================
-
 from typing import TypedDict, Annotated
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, AIMessage
 
-# ─── STEP 1: Define State (shared memory for ALL nodes) ───────
 class State(TypedDict):
     messages: Annotated[list, add_messages]  # add_messages = append, not overwrite
     step_count: int                          # plain int = last-write-wins
 
-# ─── STEP 2: Define Nodes (worker functions) ──────────────────
 def greeter_node(state: State) -> dict:
     """Node 1: reads the user message and greets them."""
     user_msg = state["messages"][-1].content

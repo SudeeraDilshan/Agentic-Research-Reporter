@@ -1,26 +1,16 @@
-# ============================================================
-# Exercise 05: Checkpointing — Memory & Multi-Turn Conversations
-# ============================================================
-# CONCEPTS: MemorySaver · thread_id · state persistence · time-travel
-#
-# Run: .\venv\Scripts\python 05_checkpointing.py
-# ============================================================
-
 from typing import TypedDict, Annotated
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver      # ← in-memory checkpointer
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langgraph.checkpoint.memory import MemorySaver  
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import get_llm
 
 llm = get_llm()
 
-# ─── State ────────────────────────────────────────────────────
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
-# ─── Node: Conversational assistant ───────────────────────────
 def assistant_node(state: State) -> dict:
     system = SystemMessage(content=(
         "You are a helpful assistant with a great memory. "
@@ -29,18 +19,14 @@ def assistant_node(state: State) -> dict:
     response = llm.invoke([system] + state["messages"])
     return {"messages": [response]}
 
-# ─── Graph with checkpointer ──────────────────────────────────
 builder = StateGraph(State)
 builder.add_node("assistant", assistant_node)
 builder.add_edge(START, "assistant")
 builder.add_edge("assistant", END)
 
-# ← KEY: compile WITH a checkpointer to enable persistence
 checkpointer = MemorySaver()
 app = builder.compile(checkpointer=checkpointer)
 
-# ─── Thread config ────────────────────────────────────────────
-# thread_id isolates separate conversation contexts
 alice_thread = {"configurable": {"thread_id": "alice-001"}}
 bob_thread   = {"configurable": {"thread_id": "bob-001"}}
 
@@ -52,7 +38,6 @@ def chat(thread_config: dict, user_message: str) -> str:
     )
     return result["messages"][-1].content
 
-# ─── Run ──────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 55)
     print("  Exercise 05 — Checkpointing & Memory")

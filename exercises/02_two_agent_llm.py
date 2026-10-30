@@ -1,11 +1,3 @@
-# ============================================================
-# Exercise 02: Two-Agent Chat with Real LLM via OpenRouter
-# ============================================================
-# CONCEPTS: ChatOpenRouter · SystemMessage · conditional routing
-#
-# Run: .\venv\Scripts\python 02_two_agent_llm.py
-# ============================================================
-
 from typing import TypedDict, Annotated
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -13,7 +5,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from config import get_llm  # ← uses your OPENROUTER_API_KEY
 
-llm = get_llm()  # reads DEFAULT_MODEL from .env
+llm = get_llm() 
 
 # ─── State ────────────────────────────────────────────────────
 class State(TypedDict):
@@ -22,7 +14,7 @@ class State(TypedDict):
 
 # ─── Node 1: Researcher — gathers facts ───────────────────────
 def researcher_node(state: State) -> dict:
-    print("  [researcher] thinking…")
+    print("  [researcher] thinking…",state)
     system = SystemMessage(content=(
         "You are a concise research agent. "
         "Given a topic, provide 3 key facts in bullet points. "
@@ -34,7 +26,7 @@ def researcher_node(state: State) -> dict:
 
 # ─── Node 2: Summariser — wraps up nicely ─────────────────────
 def summariser_node(state: State) -> dict:
-    print("  [summariser] thinking…")
+    print("  [summariser] thinking…",state)
     system = SystemMessage(content=(
         "You are a summarisation agent. "
         "Take the research facts provided and write a single, polished "

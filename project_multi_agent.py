@@ -1,6 +1,3 @@
-# ============================================================
-# PROJECT: Multi-Agent Research & Report System
-# ============================================================
 # Combines ALL concepts:
 #   ✅ State with reducers
 #   ✅ Parallel agents via Send API
@@ -8,7 +5,7 @@
 #   ✅ Subgraph (report writing pipeline)
 #   ✅ Checkpointing (MemorySaver)
 #   ✅ Human-in-the-Loop (interrupt)
-#
+
 # Flow:
 #   User query
 #     → supervisor (plans parallel research tasks)
@@ -16,24 +13,17 @@
 #     → human approval gate (interrupt)
 #     → report_subgraph (draft → edit → finalise)
 #     → END
-#
-# Run: .\venv\Scripts\python project_multi_agent.py
-# ============================================================
 
 import operator
 from typing import TypedDict, Annotated, List
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send, interrupt, Command
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import get_llm
 
 llm = get_llm()
-
-# ══════════════════════════════════════════════════════════════
-# STATES
-# ══════════════════════════════════════════════════════════════
 
 class MainState(TypedDict):
     """Root state shared across the whole system."""
@@ -193,7 +183,6 @@ def run_report_pipeline(state: MainState) -> dict:
         "final_report": report_state["final"],
     }
 
-
 # ══════════════════════════════════════════════════════════════
 # MAIN GRAPH ASSEMBLY
 # ══════════════════════════════════════════════════════════════
@@ -205,7 +194,7 @@ main_builder.add_node("human_approval", human_approval_node)
 main_builder.add_node("report_pipeline", run_report_pipeline)  # subgraph adapter
 
 main_builder.add_edge(START, "supervisor")
-main_builder.add_conditional_edges("supervisor", dispatch_workers)  # parallel fan-out
+main_builder.add_conditional_edges("supervisor", dispatch_workers, ["research_worker"])  # parallel fan-out
 main_builder.add_edge("research_worker", "human_approval")          # fan-in
 main_builder.add_conditional_edges("human_approval", approval_router, {
     "report_pipeline": "report_pipeline",

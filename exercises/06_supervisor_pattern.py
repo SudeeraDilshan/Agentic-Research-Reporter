@@ -1,17 +1,9 @@
-# ============================================================
-# Exercise 06: Supervisor Pattern — LLM-driven Orchestration
-# ============================================================
-# CONCEPTS: Supervisor node · LLM routing · looping graph
-#
 # Flow:
 #   START → supervisor ─┬→ researcher → supervisor (loop)
 #                       ├→ analyst    → supervisor (loop)
 #                       └→ END
 #
 # The supervisor LLM decides at each step: call an agent or finish.
-#
-# Run: .\venv\Scripts\python 06_supervisor_pattern.py
-# ============================================================
 
 from typing import TypedDict, Annotated, Literal
 from langgraph.graph import StateGraph, START, END
@@ -24,7 +16,6 @@ llm = get_llm()
 
 WORKERS = ["researcher", "analyst"]
 
-# ─── State ────────────────────────────────────────────────────
 class State(TypedDict):
     messages: Annotated[list, add_messages]
     next: str       # which node to call next (set by supervisor)
@@ -93,7 +84,6 @@ builder.add_edge("analyst", "supervisor")
 
 app = builder.compile()
 
-# ─── Run ──────────────────────────────────────────────────────
 if __name__ == "__main__":
     question = "What is the impact of large language models on software engineering jobs?"
 

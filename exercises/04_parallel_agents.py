@@ -1,27 +1,13 @@
-# ============================================================
-# Exercise 04: Parallel Agents — The Send API (Fan-Out/Fan-In)
-# ============================================================
-# CONCEPTS: Send · parallel supersteps · operator.add reducer
-#
-# Flow:
-#   supervisor → [worker_A, worker_B, worker_C]  ← PARALLEL
-#                         ↓ (fan-in)
-#                     aggregator → END
-#
-# Run: .\venv\Scripts\python 04_parallel_agents.py
-# ============================================================
-
 import operator
 from typing import TypedDict, Annotated, List
 from langgraph.graph import StateGraph, START, END
-from langgraph.types import Send                    # ← key import!
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langgraph.types import Send                    
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import get_llm
 
 llm = get_llm()
 
-# ─── States ───────────────────────────────────────────────────
 class OverallState(TypedDict):
     """Shared state for the main graph."""
     topic: str

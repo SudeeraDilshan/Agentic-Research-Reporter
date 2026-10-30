@@ -1,13 +1,3 @@
-# ============================================================
-# Exercise 03: Conditional Routing — Smart Decision Making
-# ============================================================
-# CONCEPTS: add_conditional_edges · router functions · Literal types
-#
-# Flow:  Input → classifier → [researcher | coder | writer] → END
-#
-# Run: .\venv\Scripts\python 03_conditional_routing.py
-# ============================================================
-
 from typing import TypedDict, Annotated, Literal
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages

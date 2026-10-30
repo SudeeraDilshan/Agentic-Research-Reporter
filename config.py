@@ -1,14 +1,7 @@
-# ============================================================
-# config.py  –  Shared LLM configuration for all exercises
-# ============================================================
-# Uses langchain-openrouter (dedicated package) which reads
-# OPENROUTER_API_KEY from your .env file automatically.
-# ============================================================
-
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # reads .env file
+load_dotenv() 
 
 import sys
 if sys.platform == "win32":
