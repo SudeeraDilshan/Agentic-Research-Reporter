@@ -60,7 +60,9 @@ $RECYCLE.BIN/
 # Logs & Databases
 *.log
 *.sqlite
+*.sqlite-*
 *.db
+*.db-*
 
 # Node / React Frontend
 frontend/node_modules/
