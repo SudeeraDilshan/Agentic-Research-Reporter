@@ -246,6 +246,16 @@ body {
   }
 }
 
+@keyframes edge-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.edge-flow-active {
+  animation: edge-dash 1s linear infinite;
+}
+
 .active-node-title {
   font-size: 17px;
   font-weight: 700;

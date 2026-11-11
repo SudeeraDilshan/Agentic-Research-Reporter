@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import GraphVisualizer from './GraphVisualizer.jsx';
 import {
   Sparkles,
   Search,
@@ -326,46 +327,34 @@ export default function App() {
         </section>
       )}
 
-      {/* ── 🗺️ FULL INTERACTIVE WORKFLOW GRAPH (NODE MAP) ── */}
-      {threadId && graphNodes.length > 0 && (
+      {/* ── 🗺️ TOTAL GRAPH TOPOLOGY & REAL-TIME ACTIVE NODE HIGHLIGHT ── */}
+      {threadId && (
         <section className="graph-visualizer-section">
           <div className="graph-section-header">
-            <h3 className="graph-section-title">
-              <Cpu size={18} color="#38bdf8" />
-              Graph Architecture & Live Node Flow
-            </h3>
-            <span style={{ fontSize: '12px', color: '#94a3b8' }}>
-              Green = Completed • Blue = Active • Gray = Pending
-            </span>
+            <div>
+              <h3 className="graph-section-title">
+                <Cpu size={18} color="#38bdf8" />
+                LangGraph Multi-Agent Architecture &amp; Real-Time Execution Flow
+              </h3>
+              <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                Complete Topology • Cyan = Active Executing Node • Green = Completed • Orange = Reflexion Loop • Click any node to inspect artifacts
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '11px', color: '#38bdf8', background: 'rgba(56, 189, 248, 0.15)', padding: '4px 10px', borderRadius: '6px', fontWeight: '600' }}>
+                Active: {currentNode}
+              </span>
+            </div>
           </div>
 
-          <div className="graph-node-grid">
-            {graphNodes.map((n) => {
-              const state = nodeStates[n.id] || 'pending';
-              const isCurrent = currentNode === n.id;
-              const effectiveState = isCurrent ? 'active' : state;
-
-              return (
-                <div key={n.id} className={`graph-node-card ${effectiveState}`}>
-                  <div className={`node-status-tag ${effectiveState}`}>
-                    {effectiveState === 'active' && <RefreshCw size={10} className="animate-spin" />}
-                    {effectiveState === 'completed' && <CheckCircle size={10} />}
-                    {effectiveState === 'pending' && <Clock size={10} />}
-                    <span>{effectiveState === 'active' ? 'Active Node' : effectiveState}</span>
-                  </div>
-
-                  <div className="node-name">
-                    {getIconComponent(n.icon, 16, effectiveState === 'active' ? '#38bdf8' : effectiveState === 'completed' ? '#34d399' : '#94a3b8')}
-                    <span>{n.title}</span>
-                  </div>
-
-                  <div className="node-subtext">
-                    {n.description}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <GraphVisualizer
+            currentNode={currentNode}
+            nodeStates={nodeStates}
+            values={values}
+            isWaitingHITL={isWaitingHITL}
+            isCompleted={isCompleted}
+          />
 
           {/* Toggleable Live Timeline */}
           {showTimeline && timeline.length > 0 && (
