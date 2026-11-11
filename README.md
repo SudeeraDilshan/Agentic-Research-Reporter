@@ -35,18 +35,19 @@ The system takes a user query and runs it through a full multi-phase pipeline:
 
 | Phase | Node | What it does |
 |-------|------|--------------|
-| 1 | `supervisor` | Structured breakdown using Pydantic into 3 targeted research tasks with search queries |
-| 2 | `research_worker` × N | Runs simultaneously via `Send` API; executes **Tavily MCP Search** and grounds findings with citations |
-| 3 | `human_approval` | **Pauses** the graph with `interrupt()` — displays findings preview and verified web source count |
-| 4 | `report_pipeline` | **Subgraph**: `draft_writer → editor → finaliser` with preserved citations and compiled reference list |
+| 1 | `supervisor` | Structured breakdown using Pydantic into 3 targeted research tasks with MCP tool assignments |
+| 2 | `research_worker` × N | Runs simultaneously via `Send` API; invokes **MCP Server tools** and grounds findings with citations |
+| 3 | `evaluator` | **Reflexion Gate**: Audits evidence completeness and spawns `follow_up_worker` if gaps exist |
+| 4 | `human_approval` | **Pauses** the graph with `interrupt()` — displays findings preview and verified web source count |
+| 5 | `report_pipeline` | **Subgraph**: `draft_writer → fact_checker (Critic) → editor → finaliser` |
 
 ### States
 
 | State class | Used by |
 |-------------|---------|
-| `MainState` | Root graph — holds query, tasks, findings, verified sources, approval, and reports |
+| `MainState` | Root graph — holds query, tasks, findings, verified sources, evaluation scores, approval, and reports |
 | `ResearchWorkerState` | Each parallel worker — private state per instance with specific focus and search query |
-| `ReportState` | Report subgraph — findings, source references, draft, edited, and final report fields |
+| `ReportState` | Report subgraph — findings, source references, draft, fact-check critique, edited, and final report |
 
 ### LangGraph Patterns Demonstrated
 
@@ -54,8 +55,10 @@ The system takes a user query and runs it through a full multi-phase pipeline:
 |---------|-------|
 | `operator.add` reducer | `research_findings` and `sources` — safely merges parallel worker outputs and web citations |
 | `Send` API fan-out | `dispatch_workers()` — spawns N workers simultaneously |
+| Reflexion Cycle | `evaluator` → `follow_up_worker` → `evaluator` self-correction loop |
 | `interrupt()` / `Command(resume=...)` | `human_approval_node()` — HITL gate |
 | Compiled subgraph | `report_subgraph` embedded as a node in the main graph |
+| Adversarial Critic | `fact_checker` audits drafts against evidence before editing |
 | `MemorySaver` checkpointer | Persists state across the interrupt/resume lifecycle |
 | Model Context Protocol (MCP) | `mcp_server/` — centralized MCP Server hosting research tools |
 
@@ -65,7 +68,7 @@ The system takes a user query and runs it through a full multi-phase pipeline:
 
 ```
 multi agent system/
-├── project_multi_agent.py        # 🏆 Main project (Phase 1: Grounded with MCP Server & Pydantic)
+├── project_multi_agent.py        # 🏆 Main project (Phase 2: Reflexion Loop & Fact-Checking Critic)
 ├── mcp_server/                   # 🏰 Central Model Context Protocol (MCP) Server package
 │   ├── server.py                 # MCPServer instance & tool registry
 │   ├── client.py                 # Dynamic MCP client adapter for LangGraph

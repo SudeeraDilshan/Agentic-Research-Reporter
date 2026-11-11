@@ -1,23 +1,23 @@
 """
-Agentic Research Reporter — Advanced Multi-Agent System with MCP Server
+Agentic Research Reporter — Phase 2 Advanced Cognitive Multi-Agent System
 
-Key Architectural Pillars:
-  ✅ Centralized Model Context Protocol (MCP) Server hosting specialized research tools:
-     • `tavily_search`: Real-time web intelligence and verification
-     • `search_academic_papers`: Scholarly and arXiv research
-     • `fetch_page_content`: In-depth webpage inspection
-  ✅ Pydantic Structured Outputs for Supervisor planning & tool assignment
-  ✅ Parallel fan-out/fan-in via LangGraph Send API
-  ✅ State accumulation using operator.add reducers
+Phase 2 Advancements:
+  ✅ Central Model Context Protocol (MCP) Server hosting specialized research tools
+  ✅ Pydantic Structured Outputs for Supervisor planning & Evaluator decisions
+  ✅ Parallel fan-out/fan-in via LangGraph Send API (with staggered LLM calls)
+  ✅ Staggered LLM synthesis inside parallel workers (avoids free-tier rate limit storms)
+  ✅ Reflexion / Research Sufficiency Evaluator Loop (dynamic gap-detection & targeted follow-up)
   ✅ Human-in-the-Loop review & interrupt gate (Command resume)
-  ✅ Modular Report Writing Subgraph (Draft -> Edit -> Finalise)
-  ✅ Persistent Checkpointing ready
+  ✅ Adversarial Fact-Checking Critic Node in the Report Subgraph
+  ✅ Grounded citation preservation & verified reference bibliography
+  ✅ MemorySaver checkpointer with thread-isolated state
 """
 
 import sys
 import re
+import time
 import operator
-from typing import TypedDict, Annotated, List, Dict, Any
+from typing import TypedDict, Annotated, List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send, interrupt, Command
@@ -31,10 +31,13 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from config import get_llm
+from config import get_llm, invoke_llm_with_retry
 from mcp_server import mcp_server, get_mcp_tools, call_mcp_tool_sync
 
 llm = get_llm()
+
+# Maximum reflection cycles to prevent infinite search loops
+MAX_REFLEXION_CYCLES = 1
 
 
 # ══════════════════════════════════════════════════════════════
@@ -59,14 +62,45 @@ class SupervisorPlan(BaseModel):
     )
 
 
+class ResearchEvaluation(BaseModel):
+    """Pydantic schema for the Evaluator node's sufficiency assessment."""
+    is_sufficient: bool = Field(
+        description="True if the collected findings comprehensively answer the query with evidence; False if critical gaps exist."
+    )
+    score: int = Field(
+        ge=1, le=10,
+        description="Quality score from 1-10 assessing overall research depth and evidence quality."
+    )
+    critique: str = Field(
+        description="Detailed analytical critique of the coverage, identifying strengths and missing perspectives."
+    )
+    follow_up_focus: Optional[str] = Field(
+        default=None,
+        description="If not sufficient, the specific subtopic or angle needing targeted investigation."
+    )
+    follow_up_query: Optional[str] = Field(
+        default=None,
+        description="If not sufficient, the targeted search query for the follow-up investigation."
+    )
+    follow_up_tool: Optional[str] = Field(
+        default="tavily_search",
+        description="MCP tool to use for follow-up: 'tavily_search' or 'search_academic_papers'."
+    )
+
+
 class MainState(TypedDict):
     """Root state shared across the multi-agent system."""
     query: str                                             # User's primary query
     research_tasks: List[Dict[str, Any]]                   # Structured tasks from supervisor
     research_findings: Annotated[List[str], operator.add]  # Merged findings from parallel workers
     sources: Annotated[List[Dict[str, Any]], operator.add] # Merged web citations from MCP tools
+    iteration_count: int                                   # Reflection loop counter
+    is_sufficient: bool                                    # Evaluator verdict
+    evaluation_critique: str                               # Evaluator feedback
+    follow_up_task: Optional[Dict[str, Any]]               # Next task if gap detected
     human_approved: bool                                   # HITL gate outcome
     draft_report: str                                      # Subgraph draft
+    fact_check_critique: str                               # Subgraph fact-checker critique
     edited_report: str                                     # Subgraph edited version
     final_report: str                                      # Final polished report
 
@@ -83,6 +117,7 @@ class ReportState(TypedDict):
     findings: List[str]
     sources: List[Dict[str, Any]]
     draft: str
+    critique: str
     edited: str
     final: str
 
@@ -127,6 +162,9 @@ def supervisor_node(state: MainState) -> dict:
         "research_tasks": tasks,
         "research_findings": [],
         "sources": [],
+        "iteration_count": 0,
+        "is_sufficient": False,
+        "evaluation_critique": "",
     }
 
 
@@ -140,6 +178,12 @@ def dispatch_workers(state: MainState) -> List[Send]:
 
 
 # ── 3. Research Worker (Invokes MCP Server Tools) ──────────────
+# Workers are dispatched in PARALLEL via the Send API (all threads launch at t=0).
+# However, MCP web searches complete quickly and independently.
+# To avoid slamming the LLM API with 3 simultaneous synthesis requests,
+# each worker staggers its LLM call by STAGGER_SECONDS * (task_id - 1).
+WORKER_LLM_STAGGER_SECONDS = 4  # e.g. Worker1 → t=0s, Worker2 → t=4s, Worker3 → t=8s
+
 def research_worker(state: ResearchWorkerState) -> dict:
     task = state["task"]
     task_id = task.get("id", 1)
@@ -150,15 +194,19 @@ def research_worker(state: ResearchWorkerState) -> dict:
     print(f"\n  🔬 [Worker {task_id}] Investigating: '{focus}'")
     print(f"     🌐 MCP Server Request: `{tool_name}`(query=\"{query}\")")
 
-    # Execute tool call through central MCP Server
+    # ── Step A: MCP web search runs immediately (no stagger — Tavily is fast) ──
     args = {"topic" if tool_name == "search_academic_papers" else "query": query, "max_results": 3}
     search_context = call_mcp_tool_sync(name=tool_name, arguments=args)
 
-    # Extract source URLs for citations
     found_urls = re.findall(r'https?://[^\s\)]+', search_context)
     sources = [{"url": u, "task_id": task_id, "focus": focus} for u in set(found_urls)]
 
-    # Synthesize findings grounded in MCP tool results
+    # ── Step B: Stagger LLM synthesis call to prevent concurrent API storms ──
+    stagger_delay = WORKER_LLM_STAGGER_SECONDS * (int(str(task_id).replace("refine_", "") or 0) - 1)
+    if stagger_delay > 0:
+        print(f"     ⏱️  [Worker {task_id}] Stagger delay {stagger_delay}s before LLM synthesis…")
+        time.sleep(stagger_delay)
+
     system = SystemMessage(content=(
         "You are an elite research analyst. Analyze the evidence provided by the MCP server "
         "and synthesize comprehensive findings. Ensure all claims are grounded in the provided sources. "
@@ -174,12 +222,17 @@ def research_worker(state: ResearchWorkerState) -> dict:
         "• 3 In-depth bullet points with citations\n"
         "• 1 Key Takeaway on strategic significance"
     ))
-    response = llm.invoke([system, prompt])
+    try:
+        response = invoke_llm_with_retry(llm, [system, prompt], max_retries=3, initial_delay=2.0)
+        content_text = response.content
+    except Exception as e:
+        print(f"     ⚠️ Worker {task_id} LLM retry exhausted: {e}. Falling back to structured search excerpts.")
+        content_text = f"Key Findings for {focus}:\n" + "\n".join([f"• {s.get('url')}" for s in sources[:3]])
 
     finding_block = (
         f"### Dimension {task_id}: {focus}\n"
         f"**MCP Tool**: `{tool_name}` | **Query**: `{query}`\n\n"
-        f"{response.content}\n"
+        f"{content_text}\n"
     )
 
     print(f"  ✅ [Worker {task_id}] Completed research with {len(sources)} verified sources.")
@@ -189,20 +242,136 @@ def research_worker(state: ResearchWorkerState) -> dict:
     }
 
 
-# ── 4. Human-in-the-Loop approval gate ────────────────────────
+# ── 4. Evaluator (Reflexion & Sufficiency Gate) ────────────────
+def evaluator_node(state: MainState) -> dict:
+    current_cycle = state.get("iteration_count", 0)
+    print(f"\n🔍 [Evaluator] Auditing research completeness (Cycle {current_cycle + 1}/{MAX_REFLEXION_CYCLES + 1})…")
+
+    findings_summary = "\n\n".join(state["research_findings"])
+    source_count = len(state.get("sources", []))
+
+    system = SystemMessage(content=(
+        "You are a rigorous research evaluator and scientific auditor. Review the accumulated research findings "
+        "and determine whether they comprehensively, accurately, and factually answer the original query.\n"
+        "Identify if any critical dimension has low evidence, failed searches, or missing factual depth.\n"
+        "If critical gaps exist, set is_sufficient=False and provide a focused follow_up_query for an MCP tool."
+    ))
+    prompt = HumanMessage(content=(
+        f"Original Query: {state['query']}\n"
+        f"Total Sources Discovered: {source_count}\n\n"
+        f"Accumulated Research Findings:\n{findings_summary}\n\n"
+        "Evaluate the completeness and evidence quality of this research."
+    ))
+
+    # If we've reached the max reflection limit, accept findings and proceed
+    if current_cycle >= MAX_REFLEXION_CYCLES:
+        print(f"   ℹ️ Reached maximum reflection cycles ({MAX_REFLEXION_CYCLES}). Approving research for review.")
+        return {
+            "is_sufficient": True,
+            "iteration_count": current_cycle + 1,
+            "follow_up_task": None,
+        }
+
+    try:
+        structured_evaluator = llm.with_structured_output(ResearchEvaluation)
+        eval_result: ResearchEvaluation = structured_evaluator.invoke([system, prompt])
+        print(f"   📊 Evaluation Score: {eval_result.score}/10 | Sufficient: {eval_result.is_sufficient}")
+        print(f"   💬 Evaluator Critique: {eval_result.critique[:120]}…")
+
+        follow_up = None
+        if not eval_result.is_sufficient and eval_result.follow_up_query:
+            follow_up = {
+                "id": f"refine_{current_cycle + 1}",
+                "focus": eval_result.follow_up_focus or "Targeted Gap Fill",
+                "tool_name": eval_result.follow_up_tool or "tavily_search",
+                "search_query": eval_result.follow_up_query,
+            }
+            print(f"   🎯 Targeted Follow-Up Identified: [{follow_up['focus']}] → Query: \"{follow_up['search_query']}\"")
+
+        return {
+            "is_sufficient": eval_result.is_sufficient,
+            "evaluation_critique": eval_result.critique,
+            "iteration_count": current_cycle + 1,
+            "follow_up_task": follow_up,
+        }
+    except Exception as e:
+        print(f"   ⚠️ Evaluator parsing fallback: {e}")
+        return {
+            "is_sufficient": True,
+            "iteration_count": current_cycle + 1,
+            "follow_up_task": None,
+        }
+
+
+# ── 5. Evaluation Router: loops back if insufficient ───────────
+def evaluation_router(state: MainState) -> str:
+    if state.get("is_sufficient", True) or state.get("iteration_count", 0) > MAX_REFLEXION_CYCLES:
+        return "human_approval"
+    else:
+        print("\n🔄 [Reflexion Loop] Routing to follow-up research worker to fill evidence gaps…")
+        return "follow_up_worker"
+
+
+# ── 6. Follow-up Worker (Fills gaps identified by Evaluator) ───
+def follow_up_worker(state: MainState) -> dict:
+    task = state.get("follow_up_task")
+    if not task:
+        return {}
+
+    focus = task.get("focus", "Targeted Gap Fill")
+    tool_name = task.get("tool_name", "tavily_search")
+    query = task.get("search_query", state["query"])
+
+    print(f"\n  🔬 [Follow-Up Worker] Deep-diving into missing area: '{focus}'")
+    print(f"     🌐 MCP Server Request: `{tool_name}`(query=\"{query}\")")
+
+    args = {"topic" if tool_name == "search_academic_papers" else "query": query, "max_results": 3}
+    search_context = call_mcp_tool_sync(name=tool_name, arguments=args)
+
+    found_urls = re.findall(r'https?://[^\s\)]+', search_context)
+    sources = [{"url": u, "task_id": "follow_up", "focus": focus} for u in set(found_urls)]
+
+    system = SystemMessage(content=(
+        "You are an investigative researcher filling a specific gap identified during evaluation. "
+        "Synthesize factual, cited insights strictly addressing the target query."
+    ))
+    prompt = HumanMessage(content=(
+        f"Missing Dimension to Fill: {focus}\n"
+        f"Original Query: {state['query']}\n\n"
+        f"--- Live Evidence from MCP Server ({tool_name}) ---\n"
+        f"{search_context}\n"
+        f"-----------------------------------------------------\n\n"
+        "Provide 3 dense, cited bullet points directly resolving this information gap."
+    ))
+    response = llm.invoke([system, prompt])
+
+    finding_block = (
+        f"### Follow-Up Dimension: {focus}\n"
+        f"**MCP Tool**: `{tool_name}` | **Refinement Query**: `{query}`\n\n"
+        f"{response.content}\n"
+    )
+
+    print(f"  ✅ [Follow-Up Worker] Successfully resolved gap with {len(sources)} additional verified sources.")
+    return {
+        "research_findings": [finding_block],
+        "sources": sources,
+    }
+
+
+# ── 7. Human-in-the-Loop approval gate ────────────────────────
 def human_approval_node(state: MainState) -> dict:
     print("\n⏸️  [HITL] Pausing for human review…")
 
     preview_sections = []
     for f in state["research_findings"]:
-        lines = [line for line in f.splitlines() if line.startswith("### Dimension") or line.startswith("•")]
+        lines = [line for line in f.splitlines() if line.startswith("### Dimension") or line.startswith("### Follow-Up") or line.startswith("•")]
         preview_sections.append("\n".join(lines[:3]))
 
     summary_preview = "\n\n".join(preview_sections)
     source_count = len(state.get("sources", []))
 
     decision = interrupt({
-        "message": f"Research complete with {source_count} verified sources from MCP Server tools! Review before report drafting.",
+        "message": f"Research complete with {source_count} verified sources (Evaluated & Refined via MCP).",
         "findings_preview": summary_preview,
         "total_sources_gathered": source_count,
         "question": "Approve report generation? (yes/no): ",
@@ -213,17 +382,17 @@ def human_approval_node(state: MainState) -> dict:
     return {"human_approved": approved}
 
 
-# ── 5. Gate: route based on human decision ────────────────────
+# ── 8. Gate: route based on human decision ────────────────────
 def approval_router(state: MainState) -> str:
     return "report_pipeline" if state["human_approved"] else END
 
 
 # ══════════════════════════════════════════════════════════════
-# REPORT SUBGRAPH (Grounded drafting, editing, and citation)
+# REPORT SUBGRAPH (Draft -> Fact-Check Critic -> Edit -> Final)
 # ══════════════════════════════════════════════════════════════
 
 def draft_writer(state: ReportState) -> dict:
-    print("\n  ✍️  [Draft Writer] Writing grounded report draft…")
+    print("\n  ✍️  [Draft Writer] Writing comprehensive report draft…")
     findings_text = "\n\n".join(state["findings"])
     system = SystemMessage(content=(
         "You are an authoritative research report writer. Using the grounded research findings "
@@ -238,26 +407,72 @@ def draft_writer(state: ReportState) -> dict:
         f"Topic: {state['query']}\n\n"
         f"Grounded Research Findings:\n{findings_text}"
     ))
-    response = llm.invoke([system, prompt])
-    return {"draft": response.content}
+    try:
+        response = invoke_llm_with_retry(llm, [system, prompt], max_retries=3, initial_delay=2.0)
+        draft = response.content
+    except Exception as e:
+        print(f"     ⚠️ Draft writer fallback: {e}")
+        draft = f"# Research Report on {state['query']}\n\n## Overview\n{findings_text}"
+    return {"draft": draft}
+
+
+def fact_checker_node(state: ReportState) -> dict:
+    print("  🕵️‍♂️ [Fact-Checker Critic] Auditing draft against gathered MCP evidence…")
+    system = SystemMessage(content=(
+        "You are an adversarial fact-checker and scientific auditor. Compare the draft report "
+        "against the raw research findings. Identify:\n"
+        "1. Any assertions not supported by the cited findings (hallucinations or over-extrapolations).\n"
+        "2. Any missing citations or inaccurate brackets.\n"
+        "3. Concrete correction guidance for the editor.\n"
+        "Be concise, blunt, and constructive."
+    ))
+
+    findings_text = "\n\n".join(state["findings"])
+    if len(findings_text) > 4000:
+        findings_text = findings_text[:4000] + "\n...[truncated for audit brevity]"
+
+    prompt = HumanMessage(content=(
+        f"Raw Grounded Findings:\n{findings_text}\n\n"
+        f"Draft Report to Audit:\n{state['draft']}"
+    ))
+
+    try:
+        response = llm.invoke([system, prompt])
+        critique = response.content
+    except Exception as e:
+        print(f"     ⚠️ Fact-checker LLM call error: {e}. Using fallback audit guidance.")
+        critique = (
+            "Fact-Check Guidance: Ensure all claims align strictly with the gathered findings, "
+            "eliminate any unsupported generalizations, and maintain all bracketed source citations."
+        )
+
+    print(f"     ✅ Fact-check audit completed.")
+    return {"critique": critique}
 
 
 def editor_node(state: ReportState) -> dict:
-    print("  📝 [Editor] Polishing flow, tone, and citation consistency…")
+    print("  📝 [Editor] Polishing report & applying Fact-Checker corrections…")
     system = SystemMessage(content=(
-        "You are a professional editor. Refine the draft report for publication quality: "
-        "enhance coherence, eliminate redundancy, and ensure academic/professional rigor. "
-        "CRITICAL: Preserve all factual claims and bracketed source citations [1], [2], etc."
+        "You are a professional editor. Refine the draft report for publication quality based on "
+        "the Fact-Checker's critique. Remove or correct any ungrounded assertions, enhance coherence, "
+        "and preserve all accurate bracketed source citations [1], [2], etc."
     ))
-    prompt = HumanMessage(content=f"Draft Report to Edit:\n{state['draft']}")
-    response = llm.invoke([system, prompt])
-    return {"edited": response.content}
+    prompt = HumanMessage(content=(
+        f"Draft Report:\n{state['draft']}\n\n"
+        f"Fact-Checker Critique:\n{state['critique']}"
+    ))
+    try:
+        response = invoke_llm_with_retry(llm, [system, prompt], max_retries=3, initial_delay=2.0)
+        edited = response.content
+    except Exception as e:
+        print(f"     ⚠️ Editor fallback: {e}")
+        edited = state["draft"]
+    return {"edited": edited}
 
 
 def finaliser_node(state: ReportState) -> dict:
     print("  🏁 [Finaliser] Generating executive summary & compiling references…")
 
-    # Compile and deduplicate web sources
     unique_sources = []
     seen = set()
     for s in state.get("sources", []):
@@ -278,19 +493,27 @@ def finaliser_node(state: ReportState) -> dict:
         "very top of the report. Keep the rest of the report intact and preserve all citations."
     ))
     prompt = HumanMessage(content=f"Report to finalise:\n{state['edited']}")
-    response = llm.invoke([system, prompt])
+    try:
+        response = invoke_llm_with_retry(llm, [system, prompt], max_retries=3, initial_delay=2.0)
+        final_body = response.content
+    except Exception as e:
+        print(f"     ⚠️ Finaliser fallback: {e}")
+        final_body = f"## Executive Summary\nThis report presents findings grounded in multi-agent research.\n\n{state['edited']}"
 
-    complete_report = f"{response.content}\n\n{references_markdown}"
+    complete_report = f"{final_body}\n\n{references_markdown}"
     return {"final": complete_report}
 
 
-# Build Report Subgraph
+# Build Report Subgraph: draft_writer -> fact_checker -> editor -> finaliser
 report_builder = StateGraph(ReportState)
 report_builder.add_node("draft_writer", draft_writer)
+report_builder.add_node("fact_checker", fact_checker_node)
 report_builder.add_node("editor", editor_node)
 report_builder.add_node("finaliser", finaliser_node)
+
 report_builder.add_edge(START, "draft_writer")
-report_builder.add_edge("draft_writer", "editor")
+report_builder.add_edge("draft_writer", "fact_checker")
+report_builder.add_edge("fact_checker", "editor")
 report_builder.add_edge("editor", "finaliser")
 report_builder.add_edge("finaliser", END)
 report_subgraph = report_builder.compile()
@@ -304,29 +527,47 @@ def run_report_pipeline(state: MainState) -> dict:
         "findings": state["research_findings"],
         "sources": state.get("sources", []),
         "draft": "",
+        "critique": "",
         "edited": "",
         "final": "",
     })
     return {
         "draft_report": report_state["draft"],
+        "fact_check_critique": report_state["critique"],
         "edited_report": report_state["edited"],
         "final_report": report_state["final"],
     }
 
 
 # ══════════════════════════════════════════════════════════════
-# MAIN GRAPH ASSEMBLY
+# MAIN GRAPH ASSEMBLY (with Evaluator & Reflexion Cycle)
 # ══════════════════════════════════════════════════════════════
 
 main_builder = StateGraph(MainState)
 main_builder.add_node("supervisor", supervisor_node)
 main_builder.add_node("research_worker", research_worker)
+main_builder.add_node("evaluator", evaluator_node)
+main_builder.add_node("follow_up_worker", follow_up_worker)
 main_builder.add_node("human_approval", human_approval_node)
 main_builder.add_node("report_pipeline", run_report_pipeline)
 
+# Graph Topology
 main_builder.add_edge(START, "supervisor")
 main_builder.add_conditional_edges("supervisor", dispatch_workers, ["research_worker"])
-main_builder.add_edge("research_worker", "human_approval")
+main_builder.add_edge("research_worker", "evaluator")  # fan-in to evaluator
+
+# Reflexion routing
+main_builder.add_conditional_edges(
+    "evaluator",
+    evaluation_router,
+    {
+        "human_approval": "human_approval",
+        "follow_up_worker": "follow_up_worker",
+    }
+)
+main_builder.add_edge("follow_up_worker", "evaluator")  # loop back to evaluator
+
+# Approval routing
 main_builder.add_conditional_edges("human_approval", approval_router, {
     "report_pipeline": "report_pipeline",
     END: END,
@@ -345,22 +586,27 @@ if __name__ == "__main__":
     query = "What are the latest architectures and breakthroughs in multi-agent LLM systems in 2025 and 2026?"
 
     print("=" * 68)
-    print("  🤖 Agentic Research Reporter — Powered by Central MCP Server")
+    print("  🤖 Agentic Research Reporter — Phase 2 (Reflexion & Fact-Checking)")
     print(f"  Query: {query}")
     print("=" * 68)
 
-    thread = {"configurable": {"thread_id": "research-session-mcp-server"}}
+    thread = {"configurable": {"thread_id": "research-session-phase2"}}
 
-    # Phase 1: Research until human approval gate
-    print("\n--- PHASE 1: Supervisor Planning & Parallel MCP Tool Execution ---")
+    # Phase 1: Research, Reflexion Loop & Human Approval Gate
+    print("\n--- PHASE 1: Supervisor Planning, MCP Execution & Reflexion Audit ---")
     result = app.invoke(
         {
             "query": query,
             "research_tasks": [],
             "research_findings": [],
             "sources": [],
+            "iteration_count": 0,
+            "is_sufficient": False,
+            "evaluation_critique": "",
+            "follow_up_task": None,
             "human_approved": False,
             "draft_report": "",
+            "fact_check_critique": "",
             "edited_report": "",
             "final_report": "",
         },
@@ -392,7 +638,7 @@ if __name__ == "__main__":
             print(f"\n  [Non-interactive stdin]: '{human_input}'")
 
         # Phase 2: Resume report generation
-        print("\n--- PHASE 2: Resuming Report Generation Pipeline ---")
+        print("\n--- PHASE 2: Resuming Report Generation Pipeline (Audited by Fact-Checker) ---")
         final_result = app.invoke(Command(resume=human_input), config=thread)
     else:
         final_result = result
@@ -400,7 +646,7 @@ if __name__ == "__main__":
     # Display Output
     print("\n" + "=" * 68)
     if final_result.get("final_report"):
-        print("  ✅ FINAL GROUNDED RESEARCH REPORT")
+        print("  ✅ FINAL GROUNDED & AUDITED RESEARCH REPORT")
         print("=" * 68)
         print(final_result["final_report"])
     else:

@@ -1,9 +1,9 @@
 """
-Export the graph visualizations for project_multi_agent.
+Export the graph visualizations for project_multi_agent (Phase 2).
 Generates:
   1. assets/project_multi_agent_combined.png  (Main Graph & Report Subgraph combined — used in README)
-  2. assets/project_multi_agent_graph.png     (Main graph only)
-  3. assets/report_subgraph.png               (Report writing pipeline subgraph only)
+  2. assets/project_multi_agent_graph.png     (Main graph with Evaluator & Reflexion cycle)
+  3. assets/report_subgraph.png               (Report writing pipeline with Fact-Checker Critic)
 """
 
 import os
@@ -15,6 +15,9 @@ from project_multi_agent import (
     supervisor_node,
     dispatch_workers,
     research_worker,
+    evaluator_node,
+    evaluation_router,
+    follow_up_worker,
     human_approval_node,
     approval_router,
 )
@@ -33,12 +36,23 @@ def export_combined_graph():
     combined_builder = StateGraph(MainState)
     combined_builder.add_node("supervisor", supervisor_node)
     combined_builder.add_node("research_worker", research_worker)
+    combined_builder.add_node("evaluator", evaluator_node)
+    combined_builder.add_node("follow_up_worker", follow_up_worker)
     combined_builder.add_node("human_approval", human_approval_node)
     combined_builder.add_node("report_pipeline", report_subgraph)
 
     combined_builder.add_edge(START, "supervisor")
     combined_builder.add_conditional_edges("supervisor", dispatch_workers, ["research_worker"])
-    combined_builder.add_edge("research_worker", "human_approval")
+    combined_builder.add_edge("research_worker", "evaluator")
+    combined_builder.add_conditional_edges(
+        "evaluator",
+        evaluation_router,
+        {
+            "human_approval": "human_approval",
+            "follow_up_worker": "follow_up_worker",
+        }
+    )
+    combined_builder.add_edge("follow_up_worker", "evaluator")
     combined_builder.add_conditional_edges(
         "human_approval",
         approval_router,
