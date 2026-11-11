@@ -16,12 +16,13 @@ Phase 2 Advancements:
 import sys
 import re
 import time
+import sqlite3
 import operator
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send, interrupt, Command
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import HumanMessage, SystemMessage
 
 if sys.platform == "win32":
@@ -99,6 +100,7 @@ class MainState(TypedDict):
     evaluation_critique: str                               # Evaluator feedback
     follow_up_task: Optional[Dict[str, Any]]               # Next task if gap detected
     human_approved: bool                                   # HITL gate outcome
+    steering_feedback: Optional[str]                       # Human guidance / steering instruction
     draft_report: str                                      # Subgraph draft
     fact_check_critique: str                               # Subgraph fact-checker critique
     edited_report: str                                     # Subgraph edited version
@@ -358,13 +360,13 @@ def follow_up_worker(state: MainState) -> dict:
     }
 
 
-# ── 7. Human-in-the-Loop approval gate ────────────────────────
+# ── 7. Human-in-the-Loop approval gate (with Steerable Guidance) ──
 def human_approval_node(state: MainState) -> dict:
-    print("\n⏸️  [HITL] Pausing for human review…")
+    print("\n⏸️  [HITL] Pausing for human review / steering…")
 
     preview_sections = []
     for f in state["research_findings"]:
-        lines = [line for line in f.splitlines() if line.startswith("### Dimension") or line.startswith("### Follow-Up") or line.startswith("•")]
+        lines = [line for line in f.splitlines() if line.startswith("### Dimension") or line.startswith("### Follow-Up") or line.startswith("### Human-Steered") or line.startswith("•")]
         preview_sections.append("\n".join(lines[:3]))
 
     summary_preview = "\n\n".join(preview_sections)
@@ -374,17 +376,80 @@ def human_approval_node(state: MainState) -> dict:
         "message": f"Research complete with {source_count} verified sources (Evaluated & Refined via MCP).",
         "findings_preview": summary_preview,
         "total_sources_gathered": source_count,
-        "question": "Approve report generation? (yes/no): ",
+        "question": "Approve report? (Reply 'yes' to proceed, or type steering guidance to refine, e.g. 'Focus on cost tradeoffs'): ",
     })
 
-    approved = str(decision).strip().lower() in ("yes", "y", "approve", "ok", "1", "true")
-    print(f"  {'✅ Approved' if approved else '❌ Rejected'} by human.")
-    return {"human_approved": approved}
+    decision_str = str(decision).strip()
+    is_approved = decision_str.lower() in ("yes", "y", "approve", "ok", "1", "true")
+    is_rejected = decision_str.lower() in ("no", "n", "abort", "cancel")
+
+    if is_approved:
+        print("  ✅ Approved directly by human.")
+        return {"human_approved": True, "steering_feedback": None}
+    elif is_rejected:
+        print("  ❌ Rejected by human.")
+        return {"human_approved": False, "steering_feedback": None}
+    else:
+        print(f"  🧭 Steerable feedback received from human: \"{decision_str}\"")
+        return {"human_approved": True, "steering_feedback": decision_str}
 
 
-# ── 8. Gate: route based on human decision ────────────────────
+# ── 8. Steering Worker (Gathers evidence addressing human guidance) ──
+def steering_worker(state: MainState) -> dict:
+    feedback = state.get("steering_feedback") or "Human guidance"
+    print(f"\n🧭 [Steering Worker] Gathering research for human guidance: \"{feedback}\"")
+
+    prompt = HumanMessage(content=(
+        f"The user wants to steer the ongoing research on: '{state['query']}'.\n"
+        f"User Steering Guidance: '{feedback}'\n\n"
+        "Provide a concise search query (under 8 words) for a web search tool to retrieve relevant evidence."
+    ))
+    try:
+        res = invoke_llm_with_retry(llm, [prompt], max_retries=2, initial_delay=1.0)
+        query = res.content.strip().strip('"').strip("'")
+    except Exception:
+        query = f"{state['query']} {feedback}"
+
+    print(f"     🌐 MCP Server Request: `tavily_search`(query=\"{query}\")")
+    search_context = call_mcp_tool_sync("tavily_search", {"query": query, "max_results": 3})
+    found_urls = re.findall(r'https?://[^\s\)]+', search_context)
+    sources = [{"url": u, "task_id": "steering", "focus": f"Steering: {feedback[:30]}"} for u in set(found_urls)]
+
+    system = SystemMessage(content=(
+        "You are an investigative research analyst integrating human steering feedback into an existing study. "
+        "Synthesize 3 dense bullet points grounded strictly in the provided MCP evidence."
+    ))
+    synth_prompt = HumanMessage(content=(
+        f"Steering Instruction: {feedback}\n"
+        f"Evidence from MCP tool:\n{search_context}\n\n"
+        "Synthesize 3 bullet points with citations directly addressing the steering guidance."
+    ))
+    try:
+        synth_res = invoke_llm_with_retry(llm, [system, synth_prompt], max_retries=2, initial_delay=1.0)
+        synth_text = synth_res.content
+    except Exception as e:
+        synth_text = f"Key findings for {feedback}:\n" + "\n".join([f"• {u}" for u in set(found_urls)[:3]])
+
+    block = (
+        f"### Human-Steered Dimension: {feedback}\n"
+        f"**MCP Tool**: `tavily_search` | **Steering Query**: `{query}`\n\n"
+        f"{synth_text}\n"
+    )
+    print(f"  ✅ [Steering Worker] Completed research with {len(sources)} verified sources.")
+    return {
+        "research_findings": [block],
+        "sources": sources,
+        "steering_feedback": None,  # Reset feedback so pipeline advances to report
+    }
+
+
+# ── 9. Gate: route based on human decision / steering ─────────
 def approval_router(state: MainState) -> str:
-    return "report_pipeline" if state["human_approved"] else END
+    if not state.get("human_approved", False):
+        return END
+    if state.get("steering_feedback"):
+        return "steering_worker"
+    return "report_pipeline"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -540,7 +605,7 @@ def run_report_pipeline(state: MainState) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════
-# MAIN GRAPH ASSEMBLY (with Evaluator & Reflexion Cycle)
+# MAIN GRAPH ASSEMBLY (with Reflexion Loop, Steerable HITL & SQLite Persistence)
 # ══════════════════════════════════════════════════════════════
 
 main_builder = StateGraph(MainState)
@@ -549,6 +614,7 @@ main_builder.add_node("research_worker", research_worker)
 main_builder.add_node("evaluator", evaluator_node)
 main_builder.add_node("follow_up_worker", follow_up_worker)
 main_builder.add_node("human_approval", human_approval_node)
+main_builder.add_node("steering_worker", steering_worker)
 main_builder.add_node("report_pipeline", run_report_pipeline)
 
 # Graph Topology
@@ -567,15 +633,33 @@ main_builder.add_conditional_edges(
 )
 main_builder.add_edge("follow_up_worker", "evaluator")  # loop back to evaluator
 
-# Approval routing
+# Approval & Steerable routing
 main_builder.add_conditional_edges("human_approval", approval_router, {
     "report_pipeline": "report_pipeline",
+    "steering_worker": "steering_worker",
     END: END,
 })
+main_builder.add_edge("steering_worker", "report_pipeline")
 main_builder.add_edge("report_pipeline", END)
 
-checkpointer = MemorySaver()
-app = main_builder.compile(checkpointer=checkpointer)
+# Persistent SQLite Checkpointer Setup
+DB_FILE = "checkpoints.sqlite"
+
+def get_sqlite_checkpointer(db_path: str = DB_FILE) -> SqliteSaver:
+    """Creates and initializes a persistent SQLite checkpointer."""
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()
+    return saver
+
+def build_main_graph(checkpointer=None):
+    """Factory to compile graph with custom or persistent SQLite checkpointer."""
+    if checkpointer is None:
+        checkpointer = get_sqlite_checkpointer()
+    return main_builder.compile(checkpointer=checkpointer)
+
+# Default pre-compiled app
+app = build_main_graph()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -586,11 +670,11 @@ if __name__ == "__main__":
     query = "What are the latest architectures and breakthroughs in multi-agent LLM systems in 2025 and 2026?"
 
     print("=" * 68)
-    print("  🤖 Agentic Research Reporter — Phase 2 (Reflexion & Fact-Checking)")
+    print("  🤖 Agentic Research Reporter — Phase 3 (SQLite Persistence & Steerable HITL)")
     print(f"  Query: {query}")
     print("=" * 68)
 
-    thread = {"configurable": {"thread_id": "research-session-phase2"}}
+    thread = {"configurable": {"thread_id": "research-session-phase3"}}
 
     # Phase 1: Research, Reflexion Loop & Human Approval Gate
     print("\n--- PHASE 1: Supervisor Planning, MCP Execution & Reflexion Audit ---")
@@ -605,6 +689,7 @@ if __name__ == "__main__":
             "evaluation_critique": "",
             "follow_up_task": None,
             "human_approved": False,
+            "steering_feedback": None,
             "draft_report": "",
             "fact_check_critique": "",
             "edited_report": "",

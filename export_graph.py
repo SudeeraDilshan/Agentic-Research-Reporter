@@ -19,6 +19,7 @@ from project_multi_agent import (
     evaluation_router,
     follow_up_worker,
     human_approval_node,
+    steering_worker,
     approval_router,
 )
 
@@ -39,6 +40,7 @@ def export_combined_graph():
     combined_builder.add_node("evaluator", evaluator_node)
     combined_builder.add_node("follow_up_worker", follow_up_worker)
     combined_builder.add_node("human_approval", human_approval_node)
+    combined_builder.add_node("steering_worker", steering_worker)
     combined_builder.add_node("report_pipeline", report_subgraph)
 
     combined_builder.add_edge(START, "supervisor")
@@ -56,8 +58,13 @@ def export_combined_graph():
     combined_builder.add_conditional_edges(
         "human_approval",
         approval_router,
-        {"report_pipeline": "report_pipeline", END: END},
+        {
+            "report_pipeline": "report_pipeline",
+            "steering_worker": "steering_worker",
+            END: END,
+        },
     )
+    combined_builder.add_edge("steering_worker", "report_pipeline")
     combined_builder.add_edge("report_pipeline", END)
 
     compiled_combined = combined_builder.compile()
