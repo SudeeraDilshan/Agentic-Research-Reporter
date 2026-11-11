@@ -15,7 +15,10 @@ import {
   Compass,
   FileText,
   Layers,
-  Sliders
+  Sliders,
+  Activity,
+  Terminal,
+  Cpu
 } from 'lucide-react';
 
 const PRESETS = [
@@ -23,6 +26,23 @@ const PRESETS = [
   "How are autonomous AI agents evaluated for safety and alignment in enterprise applications?",
   "Compare LangGraph vs CrewAI vs AutoGen for production multi-agent workflows in 2026"
 ];
+
+// Helper to map icon string to Lucide component
+const getIconComponent = (iconName, size = 16, color) => {
+  switch (iconName) {
+    case 'Layers': return <Layers size={size} color={color} />;
+    case 'Search': return <Search size={size} color={color} />;
+    case 'ShieldCheck': return <ShieldCheck size={size} color={color} />;
+    case 'RefreshCw': return <RefreshCw size={size} color={color} />;
+    case 'Sliders': return <Sliders size={size} color={color} />;
+    case 'Compass': return <Compass size={size} color={color} />;
+    case 'FileText': return <FileText size={size} color={color} />;
+    case 'AlertTriangle': return <AlertTriangle size={size} color={color} />;
+    case 'CheckCircle': return <CheckCircle size={size} color={color} />;
+    case 'Sparkles': return <Sparkles size={size} color={color} />;
+    default: return <Cpu size={size} color={color} />;
+  }
+};
 
 export default function App() {
   const [query, setQuery] = useState('');
@@ -34,6 +54,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('final');
   const [pastSessions, setPastSessions] = useState([]);
   const [serverHealth, setServerHealth] = useState(null);
+  const [showTimeline, setShowTimeline] = useState(false);
 
   const pollIntervalRef = useRef(null);
 
@@ -77,7 +98,7 @@ export default function App() {
     };
 
     fetchStatus();
-    pollIntervalRef.current = setInterval(fetchStatus, 2500);
+    pollIntervalRef.current = setInterval(fetchStatus, 2000);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
@@ -116,7 +137,6 @@ export default function App() {
         body: JSON.stringify({ decision }),
       });
       setSteeringText('');
-      // Trigger immediate refresh
       const res = await fetch(`/api/research/status/${threadId}`);
       const data = await res.json();
       setStatusData(data);
@@ -129,19 +149,14 @@ export default function App() {
 
   // Helpers
   const currentStatus = statusData?.status || 'idle';
+  const currentNode = statusData?.current_node || 'supervisor';
+  const nodeMeta = statusData?.current_node_meta || {};
+  const nodeStates = statusData?.node_states || {};
+  const graphNodes = statusData?.graph_nodes || [];
   const values = statusData?.values || {};
-  const isWaitingHITL = currentStatus === 'waiting_human_approval';
-
-  const getStepClass = (stepIndex) => {
-    const order = ['supervisor', 'research_worker', 'evaluator', 'human_approval', 'report_pipeline'];
-    const currentIdx = order.indexOf(
-      statusData?.next?.[0] || (currentStatus === 'completed' ? 'report_pipeline' : 'supervisor')
-    );
-    if (currentStatus === 'completed') return 'completed';
-    if (currentIdx === stepIndex) return 'active';
-    if (currentIdx > stepIndex) return 'completed';
-    return '';
-  };
+  const timeline = statusData?.timeline || [];
+  const isWaitingHITL = currentStatus === 'waiting_human_approval' || currentNode === 'human_approval';
+  const isCompleted = currentStatus === 'completed' || values.final_report;
 
   return (
     <div className="app-container">
@@ -229,33 +244,153 @@ export default function App() {
         </div>
       </section>
 
-      {/* ── WORKFLOW STEPPER ── */}
+      {/* ── 🌟 PROMINENT CURRENTLY ACTIVE NODE HERO BAR ── */}
       {threadId && (
-        <section className="stepper-container">
-          <div className={`step-item ${getStepClass(0)}`}>
-            <div className="step-dot">1</div>
-            <span>Supervisor Planning</span>
+        <section className={`active-node-hero ${isWaitingHITL ? 'waiting-hitl' : isCompleted ? 'completed' : ''}`}>
+          <div className="active-node-badge">
+            <div className="pulse-indicator">
+              <span className="pulse-dot" style={{
+                background: isWaitingHITL ? '#f59e0b' : isCompleted ? '#10b981' : '#38bdf8'
+              }} />
+              {!isCompleted && (
+                <span className="pulse-ring" style={{
+                  borderColor: isWaitingHITL ? '#f59e0b' : '#38bdf8'
+                }} />
+              )}
+            </div>
+
+            <div>
+              <div className="active-node-title">
+                {isCompleted ? (
+                  <>
+                    <CheckCircle size={20} color="#10b981" />
+                    <span>Workflow Completed — Grounded Report Ready</span>
+                  </>
+                ) : isWaitingHITL ? (
+                  <>
+                    <Sliders size={20} color="#f59e0b" />
+                    <span>Currently Active Node: Human-in-the-Loop Review Gate</span>
+                  </>
+                ) : (
+                  <>
+                    <Activity size={20} color="#38bdf8" />
+                    <span>Currently Active Node: {nodeMeta.title || currentNode}</span>
+                  </>
+                )}
+              </div>
+
+              <div className="active-node-desc">
+                {isCompleted
+                  ? "All 5 workflow phases completed. Executive report with grounded citations finalized below."
+                  : isWaitingHITL
+                  ? "Graph paused at approval gate. You can approve directly or type custom steering instructions to refine."
+                  : nodeMeta.description || "Agent is executing this cognitive step in the graph..."}
+              </div>
+            </div>
           </div>
-          <ArrowRight size={14} color="#475569" />
-          <div className={`step-item ${getStepClass(1)}`}>
-            <div className="step-dot">2</div>
-            <span>Parallel MCP Tools</span>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button
+              style={{
+                background: 'rgba(255,255,255,0.08)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                color: '#e2e8f0',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+              onClick={() => setShowTimeline(!showTimeline)}
+            >
+              <Terminal size={14} />
+              <span>{showTimeline ? 'Hide Node Log' : `View Node Log (${timeline.length})`}</span>
+            </button>
+
+            <span style={{
+              background: isWaitingHITL ? 'rgba(245, 158, 11, 0.2)' : isCompleted ? 'rgba(16, 185, 129, 0.2)' : 'rgba(56, 189, 248, 0.2)',
+              color: isWaitingHITL ? '#fbbf24' : isCompleted ? '#34d399' : '#38bdf8',
+              border: `1px solid ${isWaitingHITL ? 'rgba(245, 158, 11, 0.4)' : isCompleted ? 'rgba(16, 185, 129, 0.4)' : 'rgba(56, 189, 248, 0.4)'}`,
+              padding: '5px 12px',
+              borderRadius: '9999px',
+              fontSize: '11px',
+              fontWeight: '700',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px'
+            }}>
+              {isCompleted ? 'Finished' : isWaitingHITL ? 'Action Needed' : 'Running'}
+            </span>
           </div>
-          <ArrowRight size={14} color="#475569" />
-          <div className={`step-item ${getStepClass(2)}`}>
-            <div className="step-dot">3</div>
-            <span>Reflexion Evaluator</span>
+        </section>
+      )}
+
+      {/* ── 🗺️ FULL INTERACTIVE WORKFLOW GRAPH (NODE MAP) ── */}
+      {threadId && graphNodes.length > 0 && (
+        <section className="graph-visualizer-section">
+          <div className="graph-section-header">
+            <h3 className="graph-section-title">
+              <Cpu size={18} color="#38bdf8" />
+              Graph Architecture & Live Node Flow
+            </h3>
+            <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+              Green = Completed • Blue = Active • Gray = Pending
+            </span>
           </div>
-          <ArrowRight size={14} color="#475569" />
-          <div className={`step-item ${getStepClass(3)}`}>
-            <div className="step-dot">4</div>
-            <span>Steerable HITL Gate</span>
+
+          <div className="graph-node-grid">
+            {graphNodes.map((n) => {
+              const state = nodeStates[n.id] || 'pending';
+              const isCurrent = currentNode === n.id;
+              const effectiveState = isCurrent ? 'active' : state;
+
+              return (
+                <div key={n.id} className={`graph-node-card ${effectiveState}`}>
+                  <div className={`node-status-tag ${effectiveState}`}>
+                    {effectiveState === 'active' && <RefreshCw size={10} className="animate-spin" />}
+                    {effectiveState === 'completed' && <CheckCircle size={10} />}
+                    {effectiveState === 'pending' && <Clock size={10} />}
+                    <span>{effectiveState === 'active' ? 'Active Node' : effectiveState}</span>
+                  </div>
+
+                  <div className="node-name">
+                    {getIconComponent(n.icon, 16, effectiveState === 'active' ? '#38bdf8' : effectiveState === 'completed' ? '#34d399' : '#94a3b8')}
+                    <span>{n.title}</span>
+                  </div>
+
+                  <div className="node-subtext">
+                    {n.description}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <ArrowRight size={14} color="#475569" />
-          <div className={`step-item ${getStepClass(4)}`}>
-            <div className="step-dot">5</div>
-            <span>Report Subgraph & Audit</span>
-          </div>
+
+          {/* Toggleable Live Timeline */}
+          {showTimeline && timeline.length > 0 && (
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '6px', fontWeight: '600' }}>
+                Real-Time Node Execution Timeline:
+              </div>
+              <div className="timeline-feed">
+                {timeline.map((entry, idx) => (
+                  <div key={idx} className="timeline-entry">
+                    <span className="timeline-time">[{entry.timestamp}]</span>
+                    <span className="timeline-node">
+                      {entry.status === 'active' ? '▶ Started' : '✓ Completed'} {entry.node}
+                    </span>
+                    <span style={{ color: '#94a3b8' }}>
+                      {entry.details?.focus ? `(${entry.details.focus})` : ''}
+                      {entry.details?.tool ? `via MCP:${entry.details.tool}` : ''}
+                      {entry.details?.sources_count ? `(${entry.details.sources_count} sources verified)` : ''}
+                      {entry.details?.score ? `(Score: ${entry.details.score}/10)` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -496,4 +631,3 @@ export default function App() {
     </div>
   );
 }
-

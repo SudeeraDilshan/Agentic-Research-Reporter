@@ -125,11 +125,36 @@ class ReportState(TypedDict):
 
 
 # ══════════════════════════════════════════════════════════════
+# NODE EVENT OBSERVERS (For Real-Time Active Node UI Tracking)
+# ══════════════════════════════════════════════════════════════
+
+_node_observers: List[Any] = []
+
+def register_node_observer(fn):
+    """Registers a listener for node state transitions (used by FastAPI / Web UI)."""
+    if fn not in _node_observers:
+        _node_observers.append(fn)
+
+def unregister_node_observer(fn):
+    if fn in _node_observers:
+        _node_observers.remove(fn)
+
+def notify_node_event(node_name: str, event_type: str, details: Optional[Dict[str, Any]] = None):
+    """Notifies registered observers that a graph node started or completed."""
+    for obs in list(_node_observers):
+        try:
+            obs(node_name, event_type, details or {})
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════
 # MAIN GRAPH NODES
 # ══════════════════════════════════════════════════════════════
 
 # ── 1. Supervisor: Plans structured tasks & assigns MCP tools ───
 def supervisor_node(state: MainState) -> dict:
+    notify_node_event("supervisor", "started", {"query": state["query"]})
     print(f"\n🎯 [Supervisor] Planning research tasks via MCP Server tools…")
     available_tools = [t.name for t in get_mcp_tools()]
     print(f"   Available MCP Server Tools: {available_tools}")
@@ -160,6 +185,7 @@ def supervisor_node(state: MainState) -> dict:
     for t in tasks:
         print(f"   • Task {t.get('id')}: [{t.get('focus')}] → Tool: `{t.get('tool_name')}` | Query: \"{t.get('search_query')}\"")
 
+    notify_node_event("supervisor", "completed", {"tasks_count": len(tasks)})
     return {
         "research_tasks": tasks,
         "research_findings": [],
@@ -193,6 +219,7 @@ def research_worker(state: ResearchWorkerState) -> dict:
     tool_name = task.get("tool_name", "tavily_search")
     query = task.get("search_query", state["query"])
 
+    notify_node_event("research_worker", "started", {"task_id": task_id, "focus": focus, "tool": tool_name, "query": query})
     print(f"\n  🔬 [Worker {task_id}] Investigating: '{focus}'")
     print(f"     🌐 MCP Server Request: `{tool_name}`(query=\"{query}\")")
 
@@ -238,6 +265,7 @@ def research_worker(state: ResearchWorkerState) -> dict:
     )
 
     print(f"  ✅ [Worker {task_id}] Completed research with {len(sources)} verified sources.")
+    notify_node_event("research_worker", "completed", {"task_id": task_id, "focus": focus, "sources_count": len(sources)})
     return {
         "research_findings": [finding_block],
         "sources": sources,
@@ -247,6 +275,7 @@ def research_worker(state: ResearchWorkerState) -> dict:
 # ── 4. Evaluator (Reflexion & Sufficiency Gate) ────────────────
 def evaluator_node(state: MainState) -> dict:
     current_cycle = state.get("iteration_count", 0)
+    notify_node_event("evaluator", "started", {"cycle": current_cycle + 1, "sources_count": len(state.get("sources", []))})
     print(f"\n🔍 [Evaluator] Auditing research completeness (Cycle {current_cycle + 1}/{MAX_REFLEXION_CYCLES + 1})…")
 
     findings_summary = "\n\n".join(state["research_findings"])
@@ -268,6 +297,7 @@ def evaluator_node(state: MainState) -> dict:
     # If we've reached the max reflection limit, accept findings and proceed
     if current_cycle >= MAX_REFLEXION_CYCLES:
         print(f"   ℹ️ Reached maximum reflection cycles ({MAX_REFLEXION_CYCLES}). Approving research for review.")
+        notify_node_event("evaluator", "completed", {"is_sufficient": True, "score": 9, "max_cycles_reached": True})
         return {
             "is_sufficient": True,
             "iteration_count": current_cycle + 1,
@@ -290,6 +320,7 @@ def evaluator_node(state: MainState) -> dict:
             }
             print(f"   🎯 Targeted Follow-Up Identified: [{follow_up['focus']}] → Query: \"{follow_up['search_query']}\"")
 
+        notify_node_event("evaluator", "completed", {"is_sufficient": eval_result.is_sufficient, "score": eval_result.score, "has_gap": bool(follow_up)})
         return {
             "is_sufficient": eval_result.is_sufficient,
             "evaluation_critique": eval_result.critique,
@@ -298,6 +329,7 @@ def evaluator_node(state: MainState) -> dict:
         }
     except Exception as e:
         print(f"   ⚠️ Evaluator parsing fallback: {e}")
+        notify_node_event("evaluator", "completed", {"is_sufficient": True, "score": 8, "fallback": True})
         return {
             "is_sufficient": True,
             "iteration_count": current_cycle + 1,
@@ -362,6 +394,8 @@ def follow_up_worker(state: MainState) -> dict:
 
 # ── 7. Human-in-the-Loop approval gate (with Steerable Guidance) ──
 def human_approval_node(state: MainState) -> dict:
+    source_count = len(state.get("sources", []))
+    notify_node_event("human_approval", "waiting", {"sources_count": source_count})
     print("\n⏸️  [HITL] Pausing for human review / steering…")
 
     preview_sections = []
@@ -370,7 +404,6 @@ def human_approval_node(state: MainState) -> dict:
         preview_sections.append("\n".join(lines[:3]))
 
     summary_preview = "\n\n".join(preview_sections)
-    source_count = len(state.get("sources", []))
 
     decision = interrupt({
         "message": f"Research complete with {source_count} verified sources (Evaluated & Refined via MCP).",
@@ -385,18 +418,22 @@ def human_approval_node(state: MainState) -> dict:
 
     if is_approved:
         print("  ✅ Approved directly by human.")
+        notify_node_event("human_approval", "completed", {"approved": True, "steered": False})
         return {"human_approved": True, "steering_feedback": None}
     elif is_rejected:
         print("  ❌ Rejected by human.")
+        notify_node_event("human_approval", "completed", {"approved": False, "steered": False})
         return {"human_approved": False, "steering_feedback": None}
     else:
         print(f"  🧭 Steerable feedback received from human: \"{decision_str}\"")
+        notify_node_event("human_approval", "completed", {"approved": True, "steered": True, "feedback": decision_str})
         return {"human_approved": True, "steering_feedback": decision_str}
 
 
 # ── 8. Steering Worker (Gathers evidence addressing human guidance) ──
 def steering_worker(state: MainState) -> dict:
     feedback = state.get("steering_feedback") or "Human guidance"
+    notify_node_event("steering_worker", "started", {"feedback": feedback})
     print(f"\n🧭 [Steering Worker] Gathering research for human guidance: \"{feedback}\"")
 
     prompt = HumanMessage(content=(
@@ -436,6 +473,7 @@ def steering_worker(state: MainState) -> dict:
         f"{synth_text}\n"
     )
     print(f"  ✅ [Steering Worker] Completed research with {len(sources)} verified sources.")
+    notify_node_event("steering_worker", "completed", {"sources_count": len(sources)})
     return {
         "research_findings": [block],
         "sources": sources,
@@ -457,6 +495,7 @@ def approval_router(state: MainState) -> str:
 # ══════════════════════════════════════════════════════════════
 
 def draft_writer(state: ReportState) -> dict:
+    notify_node_event("draft_writer", "started")
     print("\n  ✍️  [Draft Writer] Writing comprehensive report draft…")
     findings_text = "\n\n".join(state["findings"])
     system = SystemMessage(content=(
@@ -478,10 +517,12 @@ def draft_writer(state: ReportState) -> dict:
     except Exception as e:
         print(f"     ⚠️ Draft writer fallback: {e}")
         draft = f"# Research Report on {state['query']}\n\n## Overview\n{findings_text}"
+    notify_node_event("draft_writer", "completed")
     return {"draft": draft}
 
 
 def fact_checker_node(state: ReportState) -> dict:
+    notify_node_event("fact_checker", "started")
     print("  🕵️‍♂️ [Fact-Checker Critic] Auditing draft against gathered MCP evidence…")
     system = SystemMessage(content=(
         "You are an adversarial fact-checker and scientific auditor. Compare the draft report "
@@ -512,10 +553,12 @@ def fact_checker_node(state: ReportState) -> dict:
         )
 
     print(f"     ✅ Fact-check audit completed.")
+    notify_node_event("fact_checker", "completed")
     return {"critique": critique}
 
 
 def editor_node(state: ReportState) -> dict:
+    notify_node_event("editor", "started")
     print("  📝 [Editor] Polishing report & applying Fact-Checker corrections…")
     system = SystemMessage(content=(
         "You are a professional editor. Refine the draft report for publication quality based on "
@@ -532,10 +575,12 @@ def editor_node(state: ReportState) -> dict:
     except Exception as e:
         print(f"     ⚠️ Editor fallback: {e}")
         edited = state["draft"]
+    notify_node_event("editor", "completed")
     return {"edited": edited}
 
 
 def finaliser_node(state: ReportState) -> dict:
+    notify_node_event("finaliser", "started")
     print("  🏁 [Finaliser] Generating executive summary & compiling references…")
 
     unique_sources = []
@@ -566,6 +611,7 @@ def finaliser_node(state: ReportState) -> dict:
         final_body = f"## Executive Summary\nThis report presents findings grounded in multi-agent research.\n\n{state['edited']}"
 
     complete_report = f"{final_body}\n\n{references_markdown}"
+    notify_node_event("finaliser", "completed")
     return {"final": complete_report}
 
 
