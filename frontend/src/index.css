@@ -661,3 +661,101 @@ body {
   padding-bottom: 6px;
   border-radius: 0 8px 8px 0;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   PRINT & PDF EXPORT STYLING (@media print)
+   ══════════════════════════════════════════════════════════════ */
+
+.print-only-header {
+  display: none;
+}
+
+@media print {
+  /* Hide all interactive app elements */
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+  }
+
+  .app-header,
+  .control-panel,
+  .active-node-hero,
+  .graph-visualizer-section,
+  .hitl-banner,
+  .dashboard-grid,
+  .report-action-bar,
+  .timeline-feed {
+    display: none !important;
+  }
+
+  .app-container {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .report-viewer {
+    background: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    color: #0f172a !important;
+  }
+
+  .print-only-header {
+    display: block !important;
+  }
+
+  .markdown-body {
+    color: #1e293b !important;
+    font-size: 11pt !important;
+    line-height: 1.65 !important;
+  }
+
+  .markdown-body h1 {
+    color: #0f172a !important;
+    font-size: 18pt !important;
+    border-bottom: 2px solid #e2e8f0 !important;
+    padding-bottom: 8px !important;
+    margin-top: 20px !important;
+    page-break-after: avoid;
+  }
+
+  .markdown-body h2 {
+    color: #1e293b !important;
+    font-size: 14pt !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    padding-bottom: 4px !important;
+    margin-top: 18px !important;
+    page-break-after: avoid;
+  }
+
+  .markdown-body h3 {
+    color: #334155 !important;
+    font-size: 12pt !important;
+    margin-top: 14px !important;
+    page-break-after: avoid;
+  }
+
+  .markdown-body p, 
+  .markdown-body li {
+    color: #334155 !important;
+  }
+
+  .markdown-body blockquote {
+    background: #f8fafc !important;
+    border-left: 3px solid #6366f1 !important;
+    color: #475569 !important;
+  }
+
+  .markdown-body a {
+    color: #2563eb !important;
+    text-decoration: underline !important;
+  }
+
+  /* Prevent awkward page cuts */
+  h1, h2, h3, h4, .task-item, blockquote, .print-only-header {
+    page-break-inside: avoid;
+  }
+}

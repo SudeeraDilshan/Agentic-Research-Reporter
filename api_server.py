@@ -12,6 +12,7 @@ import datetime
 import contextvars
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langgraph.types import Command
@@ -404,6 +405,25 @@ def list_threads():
             continue
 
     return {"threads": sessions}
+
+
+@server_app.get("/api/research/download/{thread_id}")
+def download_report(thread_id: str):
+    """Returns the full final report as a downloadable Markdown attachment."""
+    config = {"configurable": {"thread_id": thread_id}}
+    state_snapshot = app.get_state(config)
+    if not state_snapshot or not state_snapshot.values or not state_snapshot.values.get("final_report"):
+        raise HTTPException(status_code=404, detail="No completed report found for this session")
+
+    report_text = state_snapshot.values["final_report"]
+    query = state_snapshot.values.get("query", "report")
+    safe_name = "".join(c for c in query if c.isalnum() or c in ("-", "_")).rstrip()[:30] or "report"
+    filename = f"Research_Report_{safe_name}.md"
+
+    return PlainTextResponse(
+        content=report_text,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 if __name__ == "__main__":

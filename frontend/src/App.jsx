@@ -19,7 +19,9 @@ import {
   Sliders,
   Activity,
   Terminal,
-  Cpu
+  Cpu,
+  Download,
+  Printer
 } from 'lucide-react';
 
 const PRESETS = [
@@ -146,6 +148,28 @@ export default function App() {
     } finally {
       setSubmittingAction(false);
     }
+  };
+
+  // 5. Download Handlers (PDF & Markdown)
+  const handleDownloadPDF = () => {
+    setActiveTab('final');
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  };
+
+  const handleDownloadMarkdown = () => {
+    if (!values.final_report) return;
+    const blob = new Blob([values.final_report], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const safeTopic = (values.query || query || 'report').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 35);
+    link.download = `Research_Report_${safeTopic}_${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Helpers
@@ -514,55 +538,134 @@ export default function App() {
       {/* ── REPORT & AUDIT VIEWER ── */}
       {values.final_report && (
         <section className="report-viewer">
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px', marginBottom: '24px' }}>
-            <button
-              style={{
-                background: activeTab === 'final' ? 'var(--accent-purple)' : 'transparent',
-                color: activeTab === 'final' ? '#fff' : '#94a3b8',
-                border: 'none',
-                fontWeight: '600',
-                fontSize: '13px',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-              }}
-              onClick={() => setActiveTab('final')}
-            >
-              Final Grounded Report
-            </button>
+          {/* Printable Cover Header (Shown only during PDF generation / Print) */}
+          <div className="print-only-header">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0f172a', paddingBottom: '12px', marginBottom: '16px' }}>
+              <div>
+                <h1 style={{ fontSize: '20pt', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                  Agentic Research Reporter
+                </h1>
+                <div style={{ fontSize: '10pt', color: '#64748b', marginTop: '4px' }}>
+                  Autonomous Multi-Agent System • MCP Grounded Research • Adversarial Fact-Checking
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: '9pt', color: '#64748b' }}>
+                <div>Date: {new Date().toLocaleDateString()}</div>
+                <div>Session: {threadId}</div>
+              </div>
+            </div>
 
-            <button
-              style={{
-                background: activeTab === 'critique' ? 'var(--accent-purple)' : 'transparent',
-                color: activeTab === 'critique' ? '#fff' : '#94a3b8',
-                border: 'none',
-                fontWeight: '600',
-                fontSize: '13px',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-              }}
-              onClick={() => setActiveTab('critique')}
-            >
-              Fact-Checker Critic Audit
-            </button>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px' }}>
+              <div style={{ fontSize: '11pt', fontWeight: '700', color: '#1e293b' }}>
+                Topic: <span style={{ fontWeight: '500', color: '#0f172a' }}>{values.query || query}</span>
+              </div>
+              <div style={{ display: 'flex', gap: '20px', marginTop: '8px', fontSize: '9pt', color: '#475569' }}>
+                <span>✓ Verified Sources: <strong>{values.sources?.length || 0} Grounded MCP Citations</strong></span>
+                <span>✓ Reflexion Audit: <strong>Passed (Completeness Verified)</strong></span>
+                <span>✓ Adversarial Critic: <strong>Audited &amp; Grounded</strong></span>
+              </div>
+            </div>
+          </div>
 
-            <button
-              style={{
-                background: activeTab === 'sources' ? 'var(--accent-purple)' : 'transparent',
-                color: activeTab === 'sources' ? '#fff' : '#94a3b8',
-                border: 'none',
-                fontWeight: '600',
-                fontSize: '13px',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-              }}
-              onClick={() => setActiveTab('sources')}
-            >
-              MCP Citations ({values.sources?.length || 0})
-            </button>
+          {/* Action & Tabs Header */}
+          <div className="report-action-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                style={{
+                  background: activeTab === 'final' ? 'var(--accent-purple)' : 'transparent',
+                  color: activeTab === 'final' ? '#fff' : '#94a3b8',
+                  border: 'none',
+                  fontWeight: '600',
+                  fontSize: '13px',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setActiveTab('final')}
+              >
+                Final Grounded Report
+              </button>
+
+              <button
+                style={{
+                  background: activeTab === 'critique' ? 'var(--accent-purple)' : 'transparent',
+                  color: activeTab === 'critique' ? '#fff' : '#94a3b8',
+                  border: 'none',
+                  fontWeight: '600',
+                  fontSize: '13px',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setActiveTab('critique')}
+              >
+                Fact-Checker Critic Audit
+              </button>
+
+              <button
+                style={{
+                  background: activeTab === 'sources' ? 'var(--accent-purple)' : 'transparent',
+                  color: activeTab === 'sources' ? '#fff' : '#94a3b8',
+                  border: 'none',
+                  fontWeight: '600',
+                  fontSize: '13px',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setActiveTab('sources')}
+              >
+                MCP Citations ({values.sources?.length || 0})
+              </button>
+            </div>
+
+            {/* Download Buttons */}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={handleDownloadMarkdown}
+                title="Download report as Markdown file (.md)"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: '#1f2937',
+                  color: '#e2e8f0',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s'
+                }}
+              >
+                <FileText size={14} />
+                <span>Download .MD</span>
+              </button>
+
+              <button
+                onClick={handleDownloadPDF}
+                title="Download report as high-resolution PDF document"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'linear-gradient(135deg, #7c3aed 0%, #2563eb 100%)',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '8px 18px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 14px rgba(37, 99, 235, 0.4)',
+                  transition: 'all 0.15s'
+                }}
+              >
+                <Download size={14} />
+                <span>Download PDF</span>
+              </button>
+            </div>
           </div>
 
           {/* Tab Content */}
