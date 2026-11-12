@@ -295,7 +295,7 @@ export default function App() {
             disabled={loading || !query.trim()}
           >
             {loading ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
-            <span>{loading ? 'Investigating…' : 'Run Multi-Agent Research'}</span>
+            <span>{loading ? 'Investigating…' : 'Run Research Agent'}</span>
           </button>
         </div>
 
