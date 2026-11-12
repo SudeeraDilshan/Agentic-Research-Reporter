@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import GraphVisualizer from './GraphVisualizer.jsx';
+import SessionManagerModal from './SessionManagerModal.jsx';
 import {
   Sparkles,
   Search,
@@ -21,7 +22,9 @@ import {
   Terminal,
   Cpu,
   Download,
-  Printer
+  Printer,
+  FolderArchive,
+  Trash2
 } from 'lucide-react';
 
 const PRESETS = [
@@ -58,6 +61,7 @@ export default function App() {
   const [pastSessions, setPastSessions] = useState([]);
   const [serverHealth, setServerHealth] = useState(null);
   const [showTimeline, setShowTimeline] = useState(false);
+  const [showSessionManager, setShowSessionManager] = useState(false);
 
   const pollIntervalRef = useRef(null);
 
@@ -78,6 +82,40 @@ export default function App() {
         if (data.threads) setPastSessions(data.threads);
       })
       .catch(err => console.error("Failed to fetch sessions:", err));
+  };
+
+  const handleDeleteSession = async (targetThreadId) => {
+    try {
+      const res = await fetch(`/api/research/threads/${targetThreadId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setPastSessions(prev => prev.filter(s => s.thread_id !== targetThreadId));
+        if (threadId === targetThreadId) {
+          setThreadId('');
+          setStatusData(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+      alert("Failed to delete session: " + err.message);
+    }
+  };
+
+  const handleClearAllSessions = async () => {
+    try {
+      const res = await fetch('/api/research/threads', {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setPastSessions([]);
+        setThreadId('');
+        setStatusData(null);
+      }
+    } catch (err) {
+      console.error("Failed to clear sessions:", err);
+      alert("Failed to clear sessions: " + err.message);
+    }
   };
 
   // 2. Polling status for active thread
@@ -191,20 +229,29 @@ export default function App() {
           <h1 className="brand-title">
             <Sparkles size={26} color="#8b5cf6" />
             Agentic Research Reporter
-            <span className="brand-badge">Phase 3 • Full-Stack</span>
           </h1>
           <p style={{ color: '#94a3b8', fontSize: '13px', marginTop: '4px' }}>
             Autonomous Multi-Agent System with MCP Tools, Reflexion & SQLite Checkpoints
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
           {serverHealth && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#34d399' }}>
               <Database size={14} />
               <span>SQLite Persistent ({serverHealth.database})</span>
             </div>
           )}
+
+          <button
+            className="btn-manage-sessions"
+            onClick={() => setShowSessionManager(true)}
+            title="Open Saved Sessions Manager (resume, view details, or delete from SQLite)"
+          >
+            <FolderArchive size={15} color="#38bdf8" />
+            <span>Manage Sessions</span>
+            <span className="session-count-pill">{pastSessions.length}</span>
+          </button>
 
           {pastSessions.length > 0 && (
             <select
@@ -219,10 +266,10 @@ export default function App() {
               value={threadId}
               onChange={(e) => setThreadId(e.target.value)}
             >
-              <option value="">Switch Saved Session ({pastSessions.length})</option>
+              <option value="">Quick Switch ({pastSessions.length})</option>
               {pastSessions.map((s) => (
                 <option key={s.thread_id} value={s.thread_id}>
-                  {s.completed ? '✅' : '⏳'} {s.query.substring(0, 45)}… ({s.source_count} sources)
+                  {s.completed ? '✅' : '⏳'} {s.query.substring(0, 40)}… ({s.source_count} sources)
                 </option>
               ))}
             </select>
@@ -721,6 +768,21 @@ export default function App() {
           )}
         </section>
       )}
+
+      {/* ── SAVED SESSIONS MANAGER MODAL ── */}
+      <SessionManagerModal
+        isOpen={showSessionManager}
+        onClose={() => setShowSessionManager(false)}
+        sessions={pastSessions}
+        currentSessionId={threadId}
+        onSelectSession={(selectedId) => {
+          setThreadId(selectedId);
+          setShowSessionManager(false);
+        }}
+        onDeleteSession={handleDeleteSession}
+        onClearAll={handleClearAllSessions}
+        onRefresh={loadPastSessions}
+      />
     </div>
   );
 }

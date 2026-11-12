@@ -140,6 +140,7 @@ def _init_thread_state(thread_id: str, query: str = "") -> Dict[str, Any]:
         "query": query,
         "is_processing": True,
         "error": None,
+        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "current_node": "supervisor",
         "current_node_details": {},
         "node_states": {n["id"]: "pending" for n in GRAPH_NODES},
@@ -396,7 +397,7 @@ def resume_research(thread_id: str, req: ResumeResearchRequest, background_tasks
 
 @server_app.get("/api/research/threads")
 def list_threads():
-    """Lists saved research sessions from SQLite database."""
+    """Lists saved research sessions from SQLite database with rich metadata."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     try:
@@ -415,16 +416,76 @@ def list_threads():
             if snapshot and snapshot.values:
                 q = snapshot.values.get("query", "Untitled Query")
                 has_report = bool(snapshot.values.get("final_report"))
+                tasks = snapshot.values.get("research_tasks", [])
+                sources = snapshot.values.get("sources", [])
+                eval_score = snapshot.values.get("evaluation_score", None)
+                human_approved = snapshot.values.get("human_approved", False)
+                next_nodes = list(snapshot.next) if hasattr(snapshot, "next") else []
+
+                if has_report:
+                    status = "completed"
+                elif "human_approval" in next_nodes or (not human_approved and eval_score is not None):
+                    status = "waiting_human_approval"
+                elif tid in active_threads and active_threads[tid].get("is_processing"):
+                    status = "in_progress"
+                else:
+                    status = "paused"
+
+                active_meta = active_threads.get(tid, {})
+                created_at = active_meta.get("created_at")
+
                 sessions.append({
                     "thread_id": tid,
                     "query": q,
+                    "status": status,
                     "completed": has_report,
-                    "source_count": len(snapshot.values.get("sources", [])),
+                    "source_count": len(sources),
+                    "task_count": len(tasks),
+                    "eval_score": eval_score,
+                    "created_at": created_at,
                 })
         except Exception:
             continue
 
     return {"threads": sessions}
+
+
+@server_app.delete("/api/research/threads/{thread_id}")
+def delete_thread(thread_id: str):
+    """Deletes a saved research session from SQLite checkpoints and active memory."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+        cursor.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error deleting session: {str(e)}")
+    finally:
+        conn.close()
+
+    active_threads.pop(thread_id, None)
+    return {"success": True, "deleted_thread_id": thread_id}
+
+
+@server_app.delete("/api/research/threads")
+def clear_all_threads():
+    """Clears all saved research sessions from SQLite database and active memory."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM checkpoints")
+        cursor.execute("DELETE FROM writes")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error clearing sessions: {str(e)}")
+    finally:
+        conn.close()
+
+    active_threads.clear()
+    return {"success": True, "message": "All saved sessions deleted successfully"}
 
 
 @server_app.get("/api/research/download/{thread_id}")
