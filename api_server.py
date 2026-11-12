@@ -143,6 +143,7 @@ def _init_thread_state(thread_id: str, query: str = "") -> Dict[str, Any]:
         "current_node": "supervisor",
         "current_node_details": {},
         "node_states": {n["id"]: "pending" for n in GRAPH_NODES},
+        "worker_states": {},
         "timeline": [],
     }
 
@@ -159,7 +160,23 @@ def _on_node_event(node_name: str, event_type: str, details: Dict[str, Any]):
     thread_data = active_threads[tid]
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
-    if event_type in ("started", "waiting"):
+    # Granular tracking for each individual parallel worker
+    if node_name == "research_worker":
+        task_id = details.get("task_id", 1)
+        wkey = f"worker_{task_id}"
+        existing = thread_data.setdefault("worker_states", {}).get(wkey, {})
+        thread_data["worker_states"][wkey] = {
+            **existing,
+            "id": task_id,
+            "focus": details.get("focus", existing.get("focus", f"Worker {task_id}")),
+            "tool": details.get("tool", existing.get("tool", "tavily_search")),
+            "query": details.get("query", existing.get("query", "")),
+            "status": "completed" if event_type == "completed" else "staggering" if event_type == "staggering" else "active",
+            "stagger_delay": details.get("stagger_delay", existing.get("stagger_delay", 0)),
+            "sources_count": details.get("sources_count", existing.get("sources_count", 0)),
+        }
+
+    if event_type in ("started", "waiting", "staggering", "synthesizing"):
         thread_data["current_node"] = node_name
         thread_data["current_node_details"] = details
         thread_data["node_states"][node_name] = "active"
@@ -167,6 +184,7 @@ def _on_node_event(node_name: str, event_type: str, details: Dict[str, Any]):
             "timestamp": timestamp,
             "node": node_name,
             "status": "active",
+            "event": event_type,
             "details": details,
         })
     elif event_type == "completed":
@@ -288,6 +306,7 @@ def get_research_status(thread_id: str):
             "current_node_meta": NODE_LOOKUP.get(tracking.get("current_node", "supervisor")),
             "current_node_details": tracking.get("current_node_details", {}),
             "node_states": tracking.get("node_states", {n["id"]: "pending" for n in GRAPH_NODES}),
+            "worker_states": tracking.get("worker_states", {}),
             "timeline": tracking.get("timeline", []),
             "graph_nodes": GRAPH_NODES,
             "values": {},
@@ -341,6 +360,7 @@ def get_research_status(thread_id: str):
         "current_node_meta": NODE_LOOKUP.get(current_node),
         "current_node_details": tracking.get("current_node_details", {}),
         "node_states": node_states,
+        "worker_states": tracking.get("worker_states", {}),
         "timeline": tracking.get("timeline", []),
         "graph_nodes": GRAPH_NODES,
         "next": next_nodes,

@@ -233,9 +233,11 @@ def research_worker(state: ResearchWorkerState) -> dict:
     # ── Step B: Stagger LLM synthesis call to prevent concurrent API storms ──
     stagger_delay = WORKER_LLM_STAGGER_SECONDS * (int(str(task_id).replace("refine_", "") or 0) - 1)
     if stagger_delay > 0:
+        notify_node_event("research_worker", "staggering", {"task_id": task_id, "focus": focus, "stagger_delay": stagger_delay})
         print(f"     ⏱️  [Worker {task_id}] Stagger delay {stagger_delay}s before LLM synthesis…")
         time.sleep(stagger_delay)
 
+    notify_node_event("research_worker", "synthesizing", {"task_id": task_id, "focus": focus})
     system = SystemMessage(content=(
         "You are an elite research analyst. Analyze the evidence provided by the MCP server "
         "and synthesize comprehensive findings. Ensure all claims are grounded in the provided sources. "

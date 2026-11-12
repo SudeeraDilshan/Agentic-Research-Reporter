@@ -375,6 +375,7 @@ export default function App() {
           <GraphVisualizer
             currentNode={currentNode}
             nodeStates={nodeStates}
+            workerStates={statusData?.worker_states || {}}
             values={values}
             isWaitingHITL={isWaitingHITL}
             isCompleted={isCompleted}
