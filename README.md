@@ -35,28 +35,33 @@ The system takes a user query and runs it through a full multi-phase pipeline:
 
 | Phase | Node | What it does |
 |-------|------|--------------|
-| 1 | `supervisor` | Breaks the query into 3 parallel research tasks |
-| 2 | `research_worker` × N | Runs all tasks **simultaneously** via the `Send` API (fan-out) |
-| 3 | `human_approval` | **Pauses** the graph with `interrupt()` — waits for human yes/no |
-| 4 | `report_pipeline` | **Subgraph**: `draft_writer → editor → finaliser` |
+| 1 | `supervisor` | Structured breakdown using Pydantic into 3 targeted research tasks with MCP tool assignments |
+| 2 | `research_worker` × N | Runs simultaneously via `Send` API; invokes **MCP Server tools** and grounds findings with citations |
+| 3 | `evaluator` | **Reflexion Gate**: Audits evidence completeness and spawns `follow_up_worker` if gaps exist |
+| 4 | `human_approval` | **Pauses** the graph with `interrupt()` — displays findings preview and verified web source count |
+| 5 | `steering_worker` | **Steerable Guidance**: Collects targeted evidence if human requests specific reframing / topics |
+| 6 | `report_pipeline` | **Subgraph**: `draft_writer → fact_checker (Critic) → editor → finaliser` |
 
 ### States
 
 | State class | Used by |
 |-------------|---------|
-| `MainState` | Root graph — holds query, tasks, findings, approval, and reports |
-| `ResearchWorkerState` | Each parallel worker — private state per instance |
-| `ReportState` | Report subgraph — draft, edited, and final report fields |
+| `MainState` | Root graph — holds query, tasks, findings, verified sources, evaluation scores, steering guidance, and reports |
+| `ResearchWorkerState` | Each parallel worker — private state per instance with specific focus and search query |
+| `ReportState` | Report subgraph — findings, source references, draft, fact-check critique, edited, and final report |
 
 ### LangGraph Patterns Demonstrated
 
 | Pattern | Where |
 |---------|-------|
-| `operator.add` reducer | `research_findings` — safely merges parallel worker outputs |
+| `operator.add` reducer | `research_findings` and `sources` — safely merges parallel worker outputs and web citations |
 | `Send` API fan-out | `dispatch_workers()` — spawns N workers simultaneously |
-| `interrupt()` / `Command(resume=...)` | `human_approval_node()` — HITL gate |
+| Reflexion Cycle | `evaluator` → `follow_up_worker` → `evaluator` self-correction loop |
+| `interrupt()` / `Command(resume=...)` | `human_approval_node()` — HITL gate with steerable feedback |
 | Compiled subgraph | `report_subgraph` embedded as a node in the main graph |
-| `MemorySaver` checkpointer | Persists state across the interrupt/resume lifecycle |
+| Adversarial Critic | `fact_checker` audits drafts against evidence before editing |
+| `SqliteSaver` checkpointer | Persists state across terminal closures and multi-session resume flows (`checkpoints.sqlite`) |
+| Model Context Protocol (MCP) | `mcp_server/` — centralized MCP Server hosting research tools |
 
 ---
 
@@ -64,14 +69,32 @@ The system takes a user query and runs it through a full multi-phase pipeline:
 
 ```
 multi agent system/
-├── project_multi_agent.py        # 🏆 Main project
+├── project_multi_agent.py        # 🏆 Core multi-agent system (Phase 3: Reflexion, Steerable HITL & SQLite)
+├── api_server.py                 # 🚀 FastAPI REST API server (bridges LangGraph to React)
+├── frontend/                     # ⚛️ ReactJS Web UI (Vite + React + Markdown + Dark Glassmorphic Dashboard)
+│   ├── src/
+│   │   ├── App.jsx               # Interactive dashboard, live stepper, HITL steering & report viewer
+│   │   ├── main.jsx
+│   │   └── index.css
+│   ├── package.json
+│   └── vite.config.js
+├── mcp_server/                   # 🏰 Central Model Context Protocol (MCP) Server package
+│   ├── server.py                 # MCPServer instance & tool registry
+│   ├── client.py                 # Dynamic MCP client adapter for LangGraph
+│   └── tools/                    # Modular tool definitions
+│       ├── tavily_search.py      # Real-time web search tool
+│       ├── academic_search.py    # Scholarly (arXiv/Nature) search tool
+│       └── web_fetch.py          # Full page content extractor
 ├── export_graph.py               # Regenerates architecture graph images
 ├── config.py                     # LLM factory (OpenRouter)
 ├── requirements.txt
-├── .env                          # API key & model selection
+├── .env                          # API keys (OpenRouter & Tavily)
 ├── assets/                       # Graph images
 │   ├── project_multi_agent_combined.png
 │   ├── project_multi_agent_graph.png
+│   └── report_subgraph.png
+└── exercises/                    # 📚 Standalone learning exercises (01–06)
+```
 │   └── report_subgraph.png
 └── exercises/                    # 📚 Standalone learning exercises (01–06)
 ```
@@ -113,21 +136,38 @@ Expected:
 
 ## ▶️ Running the Project
 
+### Option A: Interactive ReactJS Web UI (Recommended)
+
+1. **Start the FastAPI Backend**:
+   ```powershell
+   .\venv\Scripts\python api_server.py
+   ```
+   *Runs at `http://127.0.0.1:8000` with Swagger docs at `http://127.0.0.1:8000/docs`.*
+
+2. **Start the React Frontend**:
+   ```powershell
+   cd frontend
+   npm run dev
+   ```
+   *Open `http://localhost:5173` in your browser.*
+
+Features in the Web UI:
+- **Real-Time Progress Stepper**: Live tracking across Supervisor, MCP Workers, Evaluator, and Report Subgraph.
+- **Interactive HITL Steering**: One-click **Approve** or input custom **Steering Guidance** to dynamically refine findings before drafting.
+- **SQLite Checkpointing**: Sessions persist across reloads; switch between past runs instantly.
+- **Markdown & Adversarial Audit Viewer**: Read the final grounded report with citations and review the Fact-Checker's critique.
+
+---
+
+### Option B: Terminal CLI
+
 ```powershell
 .\venv\Scripts\python project_multi_agent.py
 ```
 
-**Phase 1** — Supervisor plans tasks, 3 research workers run in parallel, then the graph pauses:
-```
-============================================================
-  ⏸️  HUMAN APPROVAL REQUIRED
-  Research complete! Please review the findings before report generation.
-  Approve report generation? (yes/no):
-```
-
-Type `yes` to resume → the report subgraph runs (`draft_writer → editor → finaliser`) and prints the final report.
-
-Type `no` to abort → graph ends without generating a report.
+- Type `yes` to approve report generation.
+- Or type custom steering guidance (e.g. `Focus on enterprise ROI and cybersecurity tradeoffs`) to trigger the **Steering Worker** and gather additional evidence.
+- Add `--auto-approve` flag for automated non-interactive execution.
 
 ---
 

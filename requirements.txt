@@ -28,5 +28,13 @@ openrouter==0.11.46            # underlying openrouter SDK
 # ── Utilities ────────────────────────────────────────────────
 python-dotenv==1.2.4           # reads .env file
 
-# ── Optional: Web search tool ────────────────────────────────
-tavily-python==0.8.5           # free tier at https://tavily.com
+# ── Model Context Protocol (MCP) & Tools ──────────────────────
+mcp==2.3.0                     # Anthropic Model Context Protocol SDK
+tavily-python==0.8.5           # Tavily web & extract API
+
+# ── Persistence & Checkpointing ─────────────────────────────
+langgraph-checkpoint-sqlite==3.0.0
+
+# ── Web API (Backend for React UI) ──────────────────────────
+fastapi
+uvicorn
